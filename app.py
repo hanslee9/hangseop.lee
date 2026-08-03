@@ -8,7 +8,7 @@ from backtest_engine import (
 )
 
 st.set_page_config(page_title="포트폴리오 백테스트", layout="wide")
-st.title("포트폴리오 백테스트")
+st.title("포트폴리오 백테스트(테스트 v2)")
 st.caption("한국(.KS/.KQ)·미국 종목/ETF 혼합, 최대 20종목, 배당 재투자, 리밸런싱, 정기 인출을 반영합니다.")
 
 REBAL_LABEL = {'none': '없음(Buy&Hold)', 'M': '매월', 'Q': '매분기', 'Y': '매년'}
