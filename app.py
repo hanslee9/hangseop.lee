@@ -161,6 +161,20 @@ if run:
     if not results:
         st.stop()
 
+    # 체크박스(로그 스케일) 등 다른 위젯 조작으로 재실행되어도 결과가 사라지지
+    # 않도록 세션에 저장
+    st.session_state['bt_results'] = results
+    st.session_state['bt_metrics_rows'] = metrics_rows
+    st.session_state['bt_rolling_all'] = rolling_all
+
+# ============================================================
+# 4. 결과 표시 (세션에 저장된 결과가 있으면 항상 표시)
+# ============================================================
+if 'bt_results' in st.session_state:
+    results = st.session_state['bt_results']
+    metrics_rows = st.session_state['bt_metrics_rows']
+    rolling_all = st.session_state['bt_rolling_all']
+
     # --- 성과지표 표 ---
     st.subheader("성과지표 요약")
     df_metrics = pd.DataFrame(metrics_rows).set_index("Portfolio")
