@@ -178,12 +178,16 @@ if run:
 
     # --- 포트폴리오 가치 추이 (정규화) ---
     st.subheader("포트폴리오 가치 추이 (시작=100)")
+    log_scale = st.checkbox("로그 스케일(Log scale)", value=False)
     fig1 = go.Figure()
     for name, r in results.items():
         pv = r["result"]["Portfolio_Value"]
         line_style = dict(dash="dash") if "벤치마크" in name else {}
         fig1.add_trace(go.Scatter(x=pv.index, y=pv / pv.iloc[0] * 100, name=name, line=line_style))
-    fig1.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="정규화 가치")
+    fig1.update_layout(
+        height=420, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="정규화 가치",
+        yaxis_type="log" if log_scale else "linear",
+    )
     st.plotly_chart(fig1, use_container_width=True)
 
     # --- Drawdown ---
