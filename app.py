@@ -8,7 +8,7 @@ from backtest_engine import (
 )
 
 st.set_page_config(page_title="포트폴리오 백테스트", layout="wide")
-st.title("포트폴리오 백테스트(테스트 v2)")
+st.title("포트폴리오 백테스트")
 st.caption("한국(.KS/.KQ)·미국 종목/ETF 혼합, 최대 20종목, 배당 재투자, 리밸런싱, 정기 인출을 반영합니다.")
 
 REBAL_LABEL = {'none': '없음(Buy&Hold)', 'M': '매월', 'Q': '매분기', 'Y': '매년'}
@@ -113,10 +113,18 @@ if run:
 
     with st.spinner("데이터 조회 및 백테스트 실행 중..."):
         benchmark_returns = None
+        bench_result = None
+        bench_name = None
         if use_benchmark and benchmark.strip():
+            bench_name = benchmark.strip().upper()
             try:
-                bdata, _ = load_price_data([benchmark.strip().upper()], str(start_date), str(end_date))
-                benchmark_returns = bdata[benchmark.strip().upper()]['Close'].pct_change()
+                # 벤치마크도 포트폴리오와 동일하게 배당 재투자(총수익) 기준으로 계산
+                # (가격만 비교하면 배당수익률이 다른 종목 간 비교가 불공정해짐)
+                bench_result, bench_withdrawn, bench_cashflows, bench_asset_returns = run_portfolio_backtest(
+                    [bench_name], [100], str(start_date), str(end_date),
+                    initial_investment, {'type': 'none', 'amount': 0}, 'none'
+                )
+                benchmark_returns = bench_result['Portfolio_Value'].pct_change()
             except Exception as e:
                 st.warning(f"벤치마크 데이터 조회 실패: {e}")
 
@@ -140,11 +148,15 @@ if run:
             rolling_all[cfg["name"]] = rolling_summary
             metrics_rows.append({"Portfolio": cfg["name"], **metrics})
 
-        if use_benchmark and benchmark_returns is not None:
-            bdata, bdates = load_price_data([benchmark.strip().upper()], str(start_date), str(end_date))
-            bench_pv = bdata[benchmark.strip().upper()]['Close']
-            bench_pv = bench_pv / bench_pv.iloc[0] * initial_investment
-            bench_result = pd.DataFrame({"Portfolio_Value": bench_pv})
+        if bench_result is not None:
+            bench_metrics, bench_dd = compute_metrics(
+                bench_result, initial_investment, bench_cashflows, bench_withdrawn,
+                bench_asset_returns, [100], benchmark_returns
+            )
+            bench_rolling, bench_rolling_summary = compute_rolling_returns(bench_result)
+            results[f"{bench_name} (벤치마크)"] = {"result": bench_result, "dd": bench_dd, "rolling": bench_rolling}
+            rolling_all[f"{bench_name} (벤치마크)"] = bench_rolling_summary
+            metrics_rows.append({"Portfolio": f"{bench_name} (벤치마크)", **bench_metrics})
 
     if not results:
         st.stop()
@@ -169,12 +181,8 @@ if run:
     fig1 = go.Figure()
     for name, r in results.items():
         pv = r["result"]["Portfolio_Value"]
-        fig1.add_trace(go.Scatter(x=pv.index, y=pv / pv.iloc[0] * 100, name=name))
-    if use_benchmark and benchmark_returns is not None:
-        fig1.add_trace(go.Scatter(
-            x=bench_result.index, y=bench_result["Portfolio_Value"] / bench_result["Portfolio_Value"].iloc[0] * 100,
-            name=f"{benchmark} (벤치마크)", line=dict(dash="dash")
-        ))
+        line_style = dict(dash="dash") if "벤치마크" in name else {}
+        fig1.add_trace(go.Scatter(x=pv.index, y=pv / pv.iloc[0] * 100, name=name, line=line_style))
     fig1.update_layout(height=420, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="정규화 가치")
     st.plotly_chart(fig1, use_container_width=True)
 
