@@ -62,8 +62,8 @@ def run_portfolio_backtest(tickers, weights_pct, start_date, end_date,
             row = data[t].loc[d]
             if row['Dividends'] > 0:
                 shares[t] += shares[t] * row['Dividends'] / row['Close']
-            if row['Stock Splits'] > 0:
-                shares[t] *= row['Stock Splits']
+#            if row['Stock Splits'] > 0:
+#                shares[t] *= row['Stock Splits']
 
         values = {t: shares[t] * data[t]['Close'].loc[d] for t in tickers}
         total_value = sum(values.values())
