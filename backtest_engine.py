@@ -17,7 +17,9 @@ import streamlit as st
 def load_price_data(tickers, start_date, end_date):
     data = {}
     for t in tickers:
-        df = yf.Ticker(t).history(start=start_date, end=end_date)
+        # auto_adjust=False: 원본(비조정) 종가를 받아야 Dividends/Stock Splits를
+        # 아래에서 수동으로 반영할 때 이중 반영(더블 카운팅)이 발생하지 않음
+        df = yf.Ticker(t).history(start=start_date, end=end_date, auto_adjust=False)
         if df.empty:
             raise ValueError(f"{t}: 데이터를 가져오지 못했습니다. 티커를 확인하세요.")
         df.index = df.index.tz_localize(None)
