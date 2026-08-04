@@ -118,11 +118,12 @@ if run:
         if use_benchmark and benchmark.strip():
             bench_name = benchmark.strip().upper()
             try:
-                # 벤치마크도 포트폴리오와 동일하게 배당 재투자(총수익) 기준으로 계산
-                # (가격만 비교하면 배당수익률이 다른 종목 간 비교가 불공정해짐)
+                # 벤치마크도 포트폴리오와 동일하게 (1) 배당 재투자(총수익) 기준,
+                # (2) 사용자가 설정한 정기 인출 조건을 그대로 적용해서 계산
+                # (인출 조건이 다르면 포트폴리오와 벤치마크를 공정하게 비교할 수 없음)
                 bench_result, bench_withdrawn, bench_cashflows, bench_asset_returns = run_portfolio_backtest(
                     [bench_name], [100], str(start_date), str(end_date),
-                    initial_investment, {'type': 'none', 'amount': 0}, 'none'
+                    initial_investment, withdrawal, 'none'
                 )
                 benchmark_returns = bench_result['Portfolio_Value'].pct_change()
             except Exception as e:
