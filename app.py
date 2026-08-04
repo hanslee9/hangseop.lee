@@ -215,18 +215,18 @@ if 'bt_results' in st.session_state:
     # --- Rolling Return 요약 표 (Portfolio × Roll Period를 행으로 풀어써서
     # 포트폴리오 개수가 늘어나도 표가 옆으로 늘어나지 않도록 함) ---
     st.subheader("Rolling Returns")
-    period_order = ['1Y', '3Y', '5Y', '10Y']
+    period_order = ['1Y', '3Y', '5Y', '7Y']
     table_rows = []
-    for name in results.keys():
-        for period in period_order:
+    for period in period_order:
+        for name in results.keys():
             if period in rolling_all[name]:
                 s = rolling_all[name][period]
                 table_rows.append({
-                    "Portfolio": name, "Roll Period": period,
+                    "Roll Period": period, "Portfolio": name,
                     "Average": s['Avg'], "High": s['Max'], "Low": s['Min'],
                 })
     if table_rows:
-        df_rolling = pd.DataFrame(table_rows).set_index(["Portfolio", "Roll Period"])
+        df_rolling = pd.DataFrame(table_rows).set_index(["Roll Period", "Portfolio"])
         st.dataframe(df_rolling.style.format("{:.2%}"), use_container_width=True)
 
     # --- Rolling Return 그래프: 기간별 탭 안에 모든 포트폴리오를 한 그래프에 겹쳐 표시 ---

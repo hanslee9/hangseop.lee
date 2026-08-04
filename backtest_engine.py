@@ -27,8 +27,14 @@ def load_price_data(tickers, start_date, end_date):
 
     all_dates = sorted(set().union(*[df.index for df in data.values()]))
     for t in data:
-        data[t] = data[t].reindex(all_dates).ffill()
-        data[t][['Dividends', 'Stock Splits']] = data[t][['Dividends', 'Stock Splits']].fillna(0)
+        df = data[t].reindex(all_dates)
+        # Close만 직전 값으로 채움. Dividends/Stock Splits를 ffill하면
+        # 배당·분할 발생일이 아닌 날짜(다른 시장의 개장일)에 값이 잘못 복제되어
+        # 중복 반영(더블 카운팅)되므로, 새로 채워진 날짜는 반드시 0으로 처리
+        df['Close'] = df['Close'].ffill()
+        df['Dividends'] = df['Dividends'].fillna(0)
+        df['Stock Splits'] = df['Stock Splits'].fillna(0)
+        data[t] = df
 
     return data, pd.DatetimeIndex(all_dates)
 
@@ -62,8 +68,11 @@ def run_portfolio_backtest(tickers, weights_pct, start_date, end_date,
             row = data[t].loc[d]
             if row['Dividends'] > 0:
                 shares[t] += shares[t] * row['Dividends'] / row['Close']
-#            if row['Stock Splits'] > 0:
-#                shares[t] *= row['Stock Splits']
+            # 주의: yfinance의 Close는 액면분할에 대해 항상 연속적으로(과거 가격을
+            # 현재 주식 수 기준으로) 보정되어 제공되므로, Stock Splits 비율을
+            # shares에 별도로 곱하면 분할 효과가 중복 반영되어 그날 포트폴리오
+            # 가치가 실제로는 없는 급등처럼 보이는 오류가 발생한다.
+            # 따라서 여기서는 Stock Splits 값을 shares 조정에 사용하지 않는다.
 
         values = {t: shares[t] * data[t]['Close'].loc[d] for t in tickers}
         total_value = sum(values.values())
@@ -200,7 +209,7 @@ def compute_metrics(result, initial_investment, cashflows, withdrawn_total,
 
 def compute_rolling_returns(result):
     pv = result['Portfolio_Value']
-    windows = {'1Y': 1, '3Y': 3, '5Y': 5, '10Y': 10}
+    windows = {'1Y': 1, '3Y': 3, '5Y': 5, '7Y': 7}
     rolling, summary = {}, {}
     for label, yrs in windows.items():
         window_days = int(252 * yrs)
