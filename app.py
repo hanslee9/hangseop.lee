@@ -212,16 +212,35 @@ if 'bt_results' in st.session_state:
     fig2.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
     st.plotly_chart(fig2, use_container_width=True)
 
-    # --- Rolling Return ---
-    st.subheader("Rolling Annualized Return (1Y / 3Y / 5Y / 10Y)")
-    rolling_tabs = st.tabs(list(results.keys()))
-    for (name, r), tab in zip(results.items(), rolling_tabs):
-        with tab:
-            fig3 = go.Figure()
-            for label, series in r["rolling"].items():
-                fig3.add_trace(go.Scatter(x=series.index, y=series * 100, name=label))
-            fig3.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
-            st.plotly_chart(fig3, use_container_width=True)
+    # --- Rolling Return 요약 표 (Portfolio × Roll Period를 행으로 풀어써서
+    # 포트폴리오 개수가 늘어나도 표가 옆으로 늘어나지 않도록 함) ---
+    st.subheader("Rolling Returns")
+    period_order = ['1Y', '3Y', '5Y', '10Y']
+    table_rows = []
+    for name in results.keys():
+        for period in period_order:
+            if period in rolling_all[name]:
+                s = rolling_all[name][period]
+                table_rows.append({
+                    "Portfolio": name, "Roll Period": period,
+                    "Average": s['Avg'], "High": s['Max'], "Low": s['Min'],
+                })
+    if table_rows:
+        df_rolling = pd.DataFrame(table_rows).set_index(["Portfolio", "Roll Period"])
+        st.dataframe(df_rolling.style.format("{:.2%}"), use_container_width=True)
 
-            summary_df = pd.DataFrame(rolling_all[name]).T
-            st.dataframe(summary_df.style.format("{:.2%}"), use_container_width=True)
+    # --- Rolling Return 그래프: 기간별 탭 안에 모든 포트폴리오를 한 그래프에 겹쳐 표시 ---
+    st.subheader("Annualized Rolling Return")
+    available_periods = [p for p in period_order if any(p in r["rolling"] for r in results.values())]
+    if available_periods:
+        period_tabs = st.tabs(available_periods)
+        for period, tab in zip(available_periods, period_tabs):
+            with tab:
+                fig3 = go.Figure()
+                for name, r in results.items():
+                    if period in r["rolling"]:
+                        series = r["rolling"][period]
+                        line_style = dict(dash="dash") if "벤치마크" in name else {}
+                        fig3.add_trace(go.Scatter(x=series.index, y=series * 100, name=name, line=line_style))
+                fig3.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
+                st.plotly_chart(fig3, use_container_width=True)
