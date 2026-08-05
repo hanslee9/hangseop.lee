@@ -4,7 +4,8 @@ import streamlit as st
 import plotly.graph_objects as go
 
 from backtest_engine import (
-    run_portfolio_backtest, compute_metrics, compute_rolling_returns, load_price_data
+    run_portfolio_backtest, compute_metrics, compute_rolling_returns, load_price_data,
+    compute_real_value,
 )
 
 st.set_page_config(page_title="포트폴리오 백테스트", layout="wide")
@@ -118,40 +119,51 @@ if run:
         benchmark_returns = None
         bench_result = None
         bench_name = None
-        date_notices = []
         requested_start = pd.Timestamp(start_date)
 
-        def _check_date_adjustment(label, meta):
-            eff_start = meta['effective_start']
-            if eff_start > requested_start:
-                limiting = [t for t, d in meta['first_dates'].items() if d == eff_start]
-                date_notices.append(
-                    f"**{label}**: 요청한 시작일({requested_start.date()})보다 "
-                    f"'{', '.join(limiting)}' 상장일이 늦어, **{eff_start.date()}**부터 계산했습니다."
-                )
-
+        # --- 0단계: 모든 포트폴리오 + 벤치마크의 실제 데이터 시작 가능일을 먼저 조회 ---
+        # (여러 종목/포트폴리오 중 가장 늦게 상장된 종목 기준으로 전체를 통일하기 위함)
+        entities = list(valid_configs)
         if use_benchmark and benchmark.strip():
             bench_name = benchmark.strip().upper()
+            entities = entities + [{"name": f"{bench_name} (벤치마크)", "tickers": [bench_name]}]
+
+        global_start = requested_start
+        limiting_label, limiting_tickers = None, []
+        for ent in entities:
+            try:
+                _, _, ent_meta = load_price_data(ent["tickers"], str(start_date), str(end_date))
+            except Exception as e:
+                st.error(f"[{ent['name']}] 데이터 조회 실패: {e}")
+                continue
+            if ent_meta['effective_start'] > global_start:
+                global_start = ent_meta['effective_start']
+                limiting_label = ent["name"]
+                limiting_tickers = [t for t, d in ent_meta['first_dates'].items() if d == global_start]
+
+        common_start = str(global_start.date())
+
+        # --- 1단계: 통일된 시작일(common_start)로 벤치마크 실행 ---
+        if use_benchmark and benchmark.strip():
             try:
                 # 벤치마크도 포트폴리오와 동일하게 (1) 배당 재투자(총수익) 기준,
                 # (2) 사용자가 설정한 정기 인출 조건을 그대로 적용해서 계산
                 # (인출 조건이 다르면 포트폴리오와 벤치마크를 공정하게 비교할 수 없음)
                 bench_result, bench_withdrawn, bench_cashflows, bench_asset_returns, bench_meta = run_portfolio_backtest(
-                    [bench_name], [100], str(start_date), str(end_date),
+                    [bench_name], [100], common_start, str(end_date),
                     initial_investment, withdrawal, 'none'
                 )
                 benchmark_returns = bench_result['Portfolio_Value'].pct_change()
-                _check_date_adjustment(f"{bench_name} (벤치마크)", bench_meta)
             except Exception as e:
                 st.warning(f"벤치마크 데이터 조회 실패: {e}")
 
+        # --- 2단계: 통일된 시작일(common_start)로 포트폴리오 실행 ---
         for cfg in valid_configs:
             try:
                 result, withdrawn, cashflows, asset_returns, cfg_meta = run_portfolio_backtest(
-                    cfg["tickers"], cfg["weights"], str(start_date), str(end_date),
+                    cfg["tickers"], cfg["weights"], common_start, str(end_date),
                     initial_investment, withdrawal, cfg["rebalance"]
                 )
-                _check_date_adjustment(cfg["name"], cfg_meta)
             except Exception as e:
                 st.error(f"[{cfg['name']}] 백테스트 실패: {e}")
                 continue
@@ -162,7 +174,8 @@ if run:
             )
             rolling, rolling_summary = compute_rolling_returns(result)
 
-            results[cfg["name"]] = {"result": result, "dd": dd, "rolling": rolling}
+            results[cfg["name"]] = {"result": result, "dd": dd, "rolling": rolling,
+                                     "tickers": cfg["tickers"], "weights": cfg["weights"]}
             rolling_all[cfg["name"]] = rolling_summary
             metrics_rows.append({"Portfolio": cfg["name"], **metrics})
 
@@ -172,7 +185,8 @@ if run:
                 bench_asset_returns, [100], benchmark_returns
             )
             bench_rolling, bench_rolling_summary = compute_rolling_returns(bench_result)
-            results[f"{bench_name} (벤치마크)"] = {"result": bench_result, "dd": bench_dd, "rolling": bench_rolling}
+            results[f"{bench_name} (벤치마크)"] = {"result": bench_result, "dd": bench_dd, "rolling": bench_rolling,
+                                                    "tickers": [bench_name], "weights": [100]}
             rolling_all[f"{bench_name} (벤치마크)"] = bench_rolling_summary
             metrics_rows.append({"Portfolio": f"{bench_name} (벤치마크)", **bench_metrics})
 
@@ -184,18 +198,19 @@ if run:
     st.session_state['bt_results'] = results
     st.session_state['bt_metrics_rows'] = metrics_rows
     st.session_state['bt_rolling_all'] = rolling_all
-    st.session_state['bt_date_notices'] = date_notices
+    st.session_state['bt_start_notice'] = (
+        f"'{limiting_label}'의 '{', '.join(limiting_tickers)}' 상장일이 가장 늦어, "
+        f"전체 분석 시작일을 **{global_start.date()}**로 통일했습니다 (그 이전 구간은 분석에서 제외)."
+        if global_start > requested_start else None
+    )
 
 # ============================================================
 # 4. 결과 표시 (세션에 저장된 결과가 있으면 항상 표시)
 # ============================================================
 if 'bt_results' in st.session_state:
     results = st.session_state['bt_results']
-    if st.session_state.get('bt_date_notices'):
-        st.info(
-            "일부 종목의 상장일이 요청한 시작일보다 늦어 자동으로 조정되었습니다.\n\n"
-            + "\n\n".join(st.session_state['bt_date_notices'])
-        )
+    if st.session_state.get('bt_start_notice'):
+        st.info(st.session_state['bt_start_notice'])
     metrics_rows = st.session_state['bt_metrics_rows']
     rolling_all = st.session_state['bt_rolling_all']
 
@@ -214,25 +229,70 @@ if 'bt_results' in st.session_state:
     })
     st.dataframe(df_metrics.style.format(fmt), use_container_width=True)
 
-    # --- 포트폴리오 가치 추이 (정규화) ---
-    st.subheader("포트폴리오 가치 추이 (시작=100)")
-    log_scale = st.checkbox("로그 스케일(Log scale)", value=False)
+    # --- 포트폴리오 가치 추이 & 누적 수익률 ---
+    st.subheader("포트폴리오 가치 추이 & 누적 수익률")
+    c_opt1, c_opt2 = st.columns(2)
+    with c_opt1:
+        log_scale = st.checkbox("로그 스케일(Log scale)", value=False)
+    with c_opt2:
+        adjust_inflation = st.checkbox("인플레이션 반영(실질 가치)", value=False)
+
+    plot_series = {}  # name -> (원본 pv 또는 인플레이션 조정된 pv)
+    if adjust_inflation:
+        with st.spinner("국가별 CPI 데이터 조회 중..."):
+            for name, r in results.items():
+                try:
+                    plot_series[name] = compute_real_value(
+                        r["result"]["Portfolio_Value"], r["tickers"], r["weights"]
+                    )
+                except Exception as e:
+                    st.warning(f"[{name}] 인플레이션 데이터 조회 실패, 명목 가치로 표시합니다: {e}")
+                    plot_series[name] = r["result"]["Portfolio_Value"]
+        st.caption(
+            "실질 가치는 종목의 국가(.KS/.KQ=한국, 그 외=미국)별 CPI를 초기 비중으로 "
+            "가중 평균해서 디플레이터로 사용한 근사치입니다."
+        )
+    else:
+        for name, r in results.items():
+            plot_series[name] = r["result"]["Portfolio_Value"]
+
+    LINE_WIDTH = 1.3
+
     fig1 = go.Figure()
-    for name, r in results.items():
-        pv = r["result"]["Portfolio_Value"]
-        line_style = dict(dash="dash") if "벤치마크" in name else {}
-        fig1.add_trace(go.Scatter(x=pv.index, y=pv / pv.iloc[0] * 100, name=name, line=line_style))
+    for name, pv in plot_series.items():
+        fig1.add_trace(go.Scatter(
+            x=pv.index, y=pv / pv.iloc[0] * 100, name=name,
+            line=dict(width=LINE_WIDTH),
+        ))
     fig1.update_layout(
-        height=420, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="정규화 가치",
+        height=420, margin=dict(l=10, r=10, t=30, b=10),
+        yaxis_title="정규화 가치 (시작=100)" + ("(실질)" if adjust_inflation else ""),
         yaxis_type="log" if log_scale else "linear",
+        title="가치 추이" + (" - 로그 스케일" if log_scale else ""),
     )
     st.plotly_chart(fig1, use_container_width=True)
+
+    fig1b = go.Figure()
+    for name, pv in plot_series.items():
+        fig1b.add_trace(go.Scatter(
+            x=pv.index, y=(pv / pv.iloc[0] - 1) * 100, name=name,
+            line=dict(width=LINE_WIDTH),
+        ))
+    fig1b.update_layout(
+        height=420, margin=dict(l=10, r=10, t=30, b=10),
+        yaxis_title="누적 수익률 (%)" + ("(실질)" if adjust_inflation else ""),
+        title="누적 수익률",
+    )
+    st.plotly_chart(fig1b, use_container_width=True)
 
     # --- Drawdown ---
     st.subheader("Drawdown")
     fig2 = go.Figure()
     for name, r in results.items():
-        fig2.add_trace(go.Scatter(x=r["dd"].index, y=r["dd"] * 100, name=name, fill='tozeroy'))
+        fig2.add_trace(go.Scatter(
+            x=r["dd"].index, y=r["dd"] * 100, name=name, fill='tozeroy',
+            line=dict(width=LINE_WIDTH),
+        ))
     fig2.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
     st.plotly_chart(fig2, use_container_width=True)
 
@@ -264,7 +324,9 @@ if 'bt_results' in st.session_state:
                 for name, r in results.items():
                     if period in r["rolling"]:
                         series = r["rolling"][period]
-                        line_style = dict(dash="dash") if "벤치마크" in name else {}
-                        fig3.add_trace(go.Scatter(x=series.index, y=series * 100, name=name, line=line_style))
+                        fig3.add_trace(go.Scatter(
+                            x=series.index, y=series * 100, name=name,
+                            line=dict(width=1.3),
+                        ))
                 fig3.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
                 st.plotly_chart(fig3, use_container_width=True)

@@ -52,6 +52,57 @@ def load_price_data(tickers, start_date, end_date):
     return data, pd.DatetimeIndex(all_dates), meta
 
 
+@st.cache_data(show_spinner=False, ttl=86400)
+def load_cpi_series(country):
+    """
+    country: 'US' 또는 'KR'
+    FRED(세인트루이스 연은)의 공개 CSV 엔드포인트에서 월별 CPI를 받아
+    일별로 보간(linear)한 뒤 ffill/bfill한 Series를 반환한다.
+    - US: CPIAUCSL (CPI for All Urban Consumers)
+    - KR: KORCPIALLMINMEI (OECD 집계 한국 CPI, FRED 미러링)
+    """
+    series_id = 'CPIAUCSL' if country == 'US' else 'KORCPIALLMINMEI'
+    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
+    df = pd.read_csv(url)
+    df.columns = ['date', 'cpi']
+    df['date'] = pd.to_datetime(df['date'])
+    df['cpi'] = pd.to_numeric(df['cpi'], errors='coerce')
+    df = df.dropna().set_index('date')['cpi']
+
+    daily_index = pd.date_range(df.index.min(), df.index.max(), freq='D')
+    daily = df.reindex(df.index.union(daily_index)).sort_index()
+    daily = daily.interpolate(method='time').reindex(daily_index).ffill().bfill()
+    return daily
+
+
+def ticker_country(ticker):
+    """티커 접미사로 국가 판별 (.KS/.KQ = 한국, 그 외 = 미국)"""
+    return 'KR' if ticker.upper().endswith(('.KS', '.KQ')) else 'US'
+
+
+def compute_real_value(pv, tickers, weights_pct):
+    """
+    명목 포트폴리오 가치(pv)를 인플레이션 반영 실질 가치로 변환.
+    포트폴리오에 섞인 종목의 국가별(미국/한국) CPI를 초기 비중으로 가중 블렌딩해서
+    디플레이터를 만든 뒤 곱한다 (근사치 — 종목별 실제 시점별 비중 변화까지는 반영하지 않음).
+    """
+    weights = np.array(weights_pct, dtype=float)
+    weights = weights / weights.sum()
+
+    countries = [ticker_country(t) for t in tickers]
+    needed = set(countries)
+
+    cpi_by_country = {c: load_cpi_series(c) for c in needed}
+
+    t0 = pv.index[0]
+    deflator = pd.Series(0.0, index=pv.index)
+    for t, w, c in zip(tickers, weights, countries):
+        cpi = cpi_by_country[c].reindex(pv.index).ffill().bfill()
+        deflator += w * (cpi.loc[t0] / cpi)
+
+    return pv * deflator
+
+
 def run_portfolio_backtest(tickers, weights_pct, start_date, end_date,
                             initial_investment, withdrawal, rebalance_freq):
     """
