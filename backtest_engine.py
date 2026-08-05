@@ -58,10 +58,15 @@ def load_cpi_series(country):
     country: 'US' 또는 'KR'
     FRED(세인트루이스 연은)의 공개 CSV 엔드포인트에서 월별 CPI를 받아
     일별로 보간(linear)한 뒤 ffill/bfill한 Series를 반환한다.
-    - US: CPIAUCSL (CPI for All Urban Consumers)
-    - KR: KORCPIALLMINMEI (OECD 집계 한국 CPI, FRED 미러링)
+    - US: CPIAUCSL (미국 노동통계청 CPI, 매월 갱신)
+    - KR: CPALTT01KRM659N (OECD 집계 한국 CPI, Index 2015=100, 월간)
+
+    공식 CPI 발표는 몇 달의 지연이 있으므로(특히 국제 미러링 시리즈),
+    데이터가 없는 최근 구간은 마지막 값을 그대로 반복(flat)하지 않고
+    최근 12개월 평균 월간 변화율로 오늘 날짜까지 추세를 연장한다.
+    (그렇지 않으면 최근 기간의 실질수익률이 인플레이션 0%로 왜곡됨)
     """
-    series_id = 'CPIAUCSL' if country == 'US' else 'KORCPIALLMINMEI'
+    series_id = 'CPIAUCSL' if country == 'US' else 'CPALTT01KRM659N'
     url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
     df = pd.read_csv(url)
     df.columns = ['date', 'cpi']
@@ -69,7 +74,24 @@ def load_cpi_series(country):
     df['cpi'] = pd.to_numeric(df['cpi'], errors='coerce')
     df = df.dropna().set_index('date')['cpi']
 
-    daily_index = pd.date_range(df.index.min(), df.index.max(), freq='D')
+    today = pd.Timestamp.today().normalize()
+    last_date = df.index.max()
+    if last_date < today:
+        monthly_growth = df.pct_change().dropna()
+        recent_growth = monthly_growth.tail(12).mean()
+        if pd.isna(recent_growth):
+            recent_growth = 0.0
+        future_months = pd.date_range(last_date, today + pd.Timedelta(days=31), freq='MS')
+        future_months = future_months[future_months > last_date]
+        val = df.iloc[-1]
+        extension = {}
+        for d in future_months:
+            val = val * (1 + recent_growth)
+            extension[d] = val
+        if extension:
+            df = pd.concat([df, pd.Series(extension)]).sort_index()
+
+    daily_index = pd.date_range(df.index.min(), max(df.index.max(), today), freq='D')
     daily = df.reindex(df.index.union(daily_index)).sort_index()
     daily = daily.interpolate(method='time').reindex(daily_index).ffill().bfill()
     return daily
