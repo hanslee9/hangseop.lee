@@ -237,6 +237,10 @@ if 'bt_results' in st.session_state:
     metrics_rows = st.session_state['bt_metrics_rows']
     rolling_all = st.session_state['bt_rolling_all']
 
+    # 포트폴리오/벤치마크별 고정 색상 (모든 그래프에서 동일하게 사용해 구분이 쉽도록)
+    COLOR_PALETTE = ['#1F5FA6', '#D64545', '#2E9E5B', '#8E5CC7', '#E08A2A', '#1AA6A6']
+    COLOR_MAP = {name: COLOR_PALETTE[i % len(COLOR_PALETTE)] for i, name in enumerate(results.keys())}
+
     # --- 성과지표 표 ---
     st.subheader("성과지표 요약")
     df_metrics = pd.DataFrame(metrics_rows).set_index("Portfolio")
@@ -297,14 +301,19 @@ if 'bt_results' in st.session_state:
         df_real = pd.DataFrame(real_rows).set_index("Portfolio")
         render_table(df_real, "{:.2%}")
 
-    LINE_WIDTH = 1.3
+    LINE_WIDTH = 1.8
+
+    def hex_to_rgba(hex_color, alpha):
+        h = hex_color.lstrip('#')
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        return f"rgba({r},{g},{b},{alpha})"
 
     fig1 = go.Figure()
     for name, pv in plot_series.items():
         normalized = pv / pv.iloc[0] * 100
         fig1.add_trace(go.Scatter(
             x=pv.index, y=normalized, name=name,
-            line=dict(width=LINE_WIDTH),
+            line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
         ))
         # 우측 끝에 실제 금액(End Value) 라벨 표시 - 인플레이션 반영 시 실질,
         # 아닐 시 명목 값이 plot_series에 이미 반영되어 있으므로 그대로 사용
@@ -312,7 +321,7 @@ if 'bt_results' in st.session_state:
             x=pv.index[-1], y=normalized.iloc[-1],
             text=f"${pv.iloc[-1]:,.0f}",
             showarrow=False, xanchor="left", xshift=6,
-            font=dict(size=11), align="left",
+            font=dict(size=11, color=COLOR_MAP[name]), align="left",
         )
     fig1.update_layout(
         height=420, margin=dict(l=10, r=70, t=30, b=10),
@@ -326,7 +335,7 @@ if 'bt_results' in st.session_state:
     for name, pv in plot_series.items():
         fig1b.add_trace(go.Scatter(
             x=pv.index, y=(pv / pv.iloc[0] - 1) * 100, name=name,
-            line=dict(width=LINE_WIDTH),
+            line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
         ))
     fig1b.update_layout(
         height=420, margin=dict(l=10, r=10, t=30, b=10),
@@ -341,7 +350,8 @@ if 'bt_results' in st.session_state:
     for name, r in results.items():
         fig2.add_trace(go.Scatter(
             x=r["dd"].index, y=r["dd"] * 100, name=name, fill='tozeroy',
-            line=dict(width=LINE_WIDTH),
+            line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
+            fillcolor=hex_to_rgba(COLOR_MAP[name], 0.15),
         ))
     fig2.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
     st.plotly_chart(fig2, use_container_width=True)
@@ -432,7 +442,7 @@ if 'bt_results' in st.session_state:
                         series = r["rolling"][period]
                         fig3.add_trace(go.Scatter(
                             x=series.index, y=series * 100, name=name,
-                            line=dict(width=1.3),
+                            line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
                         ))
                 fig3.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
                 st.plotly_chart(fig3, use_container_width=True)

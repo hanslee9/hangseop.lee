@@ -13,6 +13,21 @@ from scipy.optimize import brentq
 import streamlit as st
 
 
+def clean_price_outliers(close, window=21, factor=3.0):
+    """
+    yfinance 원본 데이터에 간혹 섞이는 단발성 이상치(하루~며칠 새 비정상적으로
+    급등 후 원상복귀하는 값)를 걸러낸다. 직전 window일(과거 구간만, 스파이크
+    당일은 포함하지 않음)의 중앙값 대비 factor배 이상 벗어나면 이상치로 보고
+    선형보간으로 대체한다.
+    """
+    trailing_median = close.rolling(window, min_periods=1).median().shift(1).bfill()
+    ratio = close / trailing_median
+    is_outlier = (ratio > factor) | (ratio < 1 / factor)
+    cleaned = close.mask(is_outlier)
+    cleaned = cleaned.interpolate(method='linear').ffill().bfill()
+    return cleaned
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def load_price_data(tickers, start_date, end_date):
     data = {}
@@ -24,7 +39,9 @@ def load_price_data(tickers, start_date, end_date):
         if df.empty:
             raise ValueError(f"{t}: 데이터를 가져오지 못했습니다. 티커를 확인하세요.")
         df.index = df.index.tz_localize(None)
-        data[t] = df[['Close', 'Dividends', 'Stock Splits']]
+        df = df[['Close', 'Dividends', 'Stock Splits']].copy()
+        df['Close'] = clean_price_outliers(df['Close'])
+        data[t] = df
         # yfinance는 요청한 시작일이 상장일 이전이어도 실제 상장일부터의 데이터만
         # 돌려주므로, 각 종목의 실제 데이터 시작일을 그대로 기록해두면 됨
         first_dates[t] = df.index.min()
