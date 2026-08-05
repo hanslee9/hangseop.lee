@@ -15,6 +15,26 @@ st.caption("한국(.KS/.KQ)·미국 종목/ETF 혼합, 최대 20종목, 배당 �
 REBAL_LABEL = {'none': '없음(Buy&Hold)', 'M': '매월', 'Q': '매분기', 'Y': '매년'}
 WITHDRAW_LABEL = {'none': '없음', 'monthly_fixed': '매월 고정금액', 'annual_fixed': '매년 고정금액', 'annual_pct': '매년 %'}
 
+
+def render_table(df, fmt=None, wrap_headers=True, max_col_width=78):
+    """표 렌더링 공용 헬퍼: 헤더는 줄바꿈해서 폭을 줄이고, 음수는 빨간색으로 표시"""
+    styler = df.style
+    if fmt:
+        styler = styler.format(fmt)
+    styler = styler.map(lambda v: 'color:#c0392b' if isinstance(v, (int, float)) and v < 0 else '')
+
+    header_props = [('font-size', '11px'), ('padding', '4px 5px'), ('text-align', 'center'),
+                     ('background-color', '#f0f2f6')]
+    if wrap_headers:
+        header_props += [('white-space', 'normal'), ('word-break', 'break-word'),
+                          ('max-width', f'{max_col_width}px')]
+    styler = styler.set_table_styles([
+        {'selector': 'th', 'props': header_props},
+        {'selector': 'td', 'props': [('font-size', '12px'), ('padding', '3px 6px'), ('text-align', 'right')]},
+    ])
+    st.markdown(styler.to_html(), unsafe_allow_html=True)
+
+
 # ============================================================
 # 1. Parameters
 # ============================================================
@@ -230,7 +250,7 @@ if 'bt_results' in st.session_state:
         'Ulcer Index': "{:.2f}", 'UPI': "{:.2f}",
         'Diversification Ratio': "{:.2f}", 'Beta': "{:.2f}",
     })
-    st.dataframe(df_metrics.style.format(fmt), use_container_width=True)
+    render_table(df_metrics, fmt)
 
     # --- 포트폴리오 가치 추이 & 누적 수익률 ---
     st.subheader("포트폴리오 가치 추이 & 누적 수익률")
@@ -275,7 +295,7 @@ if 'bt_results' in st.session_state:
                 "연평균 인플레이션 효과": nominal_cagr - real_cagr,
             })
         df_real = pd.DataFrame(real_rows).set_index("Portfolio")
-        st.dataframe(df_real.style.format("{:.2%}"), use_container_width=True)
+        render_table(df_real, "{:.2%}")
 
     LINE_WIDTH = 1.3
 
@@ -380,7 +400,7 @@ if 'bt_results' in st.session_state:
             fmt_annual[(name, 'Real Return')] = "{:.2%}"
             fmt_annual[(name, 'Real Balance')] = "{:,.0f}"
             fmt_annual[(name, 'Real Profit/Loss')] = "{:,.0f}"
-    st.dataframe(df_annual.style.format(fmt_annual), use_container_width=True)
+    render_table(df_annual, fmt_annual)
 
     # --- Rolling Return 요약 표 (Portfolio × Roll Period를 행으로 풀어써서
     # 포트폴리오 개수가 늘어나도 표가 옆으로 늘어나지 않도록 함) ---
@@ -397,7 +417,7 @@ if 'bt_results' in st.session_state:
                 })
     if table_rows:
         df_rolling = pd.DataFrame(table_rows).set_index(["Roll Period", "Portfolio"])
-        st.dataframe(df_rolling.style.format("{:.2%}"), use_container_width=True)
+        render_table(df_rolling, "{:.2%}")
 
     # --- Rolling Return 그래프: 기간별 탭 안에 모든 포트폴리오를 한 그래프에 겹쳐 표시 ---
     st.subheader("Annualized Rolling Return")
