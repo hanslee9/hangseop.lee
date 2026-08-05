@@ -13,35 +13,23 @@ from scipy.optimize import brentq
 import streamlit as st
 
 
-def clean_price_outliers(close, window=21, factor=3.0):
-    """
-    yfinance 원본 데이터에 간혹 섞이는 단발성 이상치(하루~며칠 새 비정상적으로
-    급등 후 원상복귀하는 값)를 걸러낸다. 직전 window일(과거 구간만, 스파이크
-    당일은 포함하지 않음)의 중앙값 대비 factor배 이상 벗어나면 이상치로 보고
-    선형보간으로 대체한다.
-    """
-    trailing_median = close.rolling(window, min_periods=1).median().shift(1).bfill()
-    ratio = close / trailing_median
-    is_outlier = (ratio > factor) | (ratio < 1 / factor)
-    cleaned = close.mask(is_outlier)
-    cleaned = cleaned.interpolate(method='linear').ffill().bfill()
-    return cleaned
-
-
 @st.cache_data(show_spinner=False, ttl=3600)
 def load_price_data(tickers, start_date, end_date):
+    """
+    'Adj Close'(배당·액면분할이 모두 반영된 총수익 기준 조정종가)를 그대로 사용한다.
+    이렇게 하면 배당 재투자·액면분할을 수동으로 재구성할 필요가 없어서,
+    시장(한국/미국)마다 분할 처리 방식이 달라 생기던 이중/누락 반영 버그가
+    구조적으로 사라진다. auto_adjust=False로 받아야 'Close'와 별도로
+    'Adj Close'가 함께 내려온다.
+    """
     data = {}
     first_dates = {}
     for t in tickers:
-        # auto_adjust=False: 원본(비조정) 종가를 받아야 Dividends/Stock Splits를
-        # 아래에서 수동으로 반영할 때 이중 반영(더블 카운팅)이 발생하지 않음
         df = yf.Ticker(t).history(start=start_date, end=end_date, auto_adjust=False)
         if df.empty:
             raise ValueError(f"{t}: 데이터를 가져오지 못했습니다. 티커를 확인하세요.")
         df.index = df.index.tz_localize(None)
-        df = df[['Close', 'Dividends', 'Stock Splits']].copy()
-        df['Close'] = clean_price_outliers(df['Close'])
-        data[t] = df
+        data[t] = df[['Adj Close']].rename(columns={'Adj Close': 'Price'})
         # yfinance는 요청한 시작일이 상장일 이전이어도 실제 상장일부터의 데이터만
         # 돌려주므로, 각 종목의 실제 데이터 시작일을 그대로 기록해두면 됨
         first_dates[t] = df.index.min()
@@ -56,14 +44,7 @@ def load_price_data(tickers, start_date, end_date):
         if effective_start <= d <= effective_end
     )
     for t in data:
-        df = data[t].reindex(all_dates)
-        # Close만 직전 값으로 채움. Dividends/Stock Splits를 ffill하면
-        # 배당·분할 발생일이 아닌 날짜(다른 시장의 개장일)에 값이 잘못 복제되어
-        # 중복 반영(더블 카운팅)되므로, 새로 채워진 날짜는 반드시 0으로 처리
-        df['Close'] = df['Close'].ffill()
-        df['Dividends'] = df['Dividends'].fillna(0)
-        df['Stock Splits'] = df['Stock Splits'].fillna(0)
-        data[t] = df
+        data[t] = data[t].reindex(all_dates).ffill()
 
     meta = {'effective_start': effective_start, 'effective_end': effective_end, 'first_dates': first_dates}
     return data, pd.DatetimeIndex(all_dates), meta
@@ -157,7 +138,7 @@ def run_portfolio_backtest(tickers, weights_pct, start_date, end_date,
 
     shares = {}
     for t, w in zip(tickers, weights):
-        first_price = data[t]['Close'].iloc[0]
+        first_price = data[t]['Price'].iloc[0]
         shares[t] = (initial_investment * w) / first_price
 
     portfolio_history = []
@@ -167,17 +148,7 @@ def run_portfolio_backtest(tickers, weights_pct, start_date, end_date,
     last_withdraw_period = None
 
     for i, d in enumerate(dates):
-        for t in tickers:
-            row = data[t].loc[d]
-            if row['Dividends'] > 0:
-                shares[t] += shares[t] * row['Dividends'] / row['Close']
-            # 주의: yfinance의 Close는 액면분할에 대해 항상 연속적으로(과거 가격을
-            # 현재 주식 수 기준으로) 보정되어 제공되므로, Stock Splits 비율을
-            # shares에 별도로 곱하면 분할 효과가 중복 반영되어 그날 포트폴리오
-            # 가치가 실제로는 없는 급등처럼 보이는 오류가 발생한다.
-            # 따라서 여기서는 Stock Splits 값을 shares 조정에 사용하지 않는다.
-
-        values = {t: shares[t] * data[t]['Close'].loc[d] for t in tickers}
+        values = {t: shares[t] * data[t]['Price'].loc[d] for t in tickers}
         total_value = sum(values.values())
 
         if withdrawal['type'] != 'none' and i > 0:
@@ -196,7 +167,7 @@ def run_portfolio_backtest(tickers, weights_pct, start_date, end_date,
                 withdrawn_total += amount
                 cashflows.append((d, amount))
                 last_withdraw_period = period
-                values = {t: shares[t] * data[t]['Close'].loc[d] for t in tickers}
+                values = {t: shares[t] * data[t]['Price'].loc[d] for t in tickers}
                 total_value = sum(values.values())
 
         if rebalance_freq != 'none':
@@ -205,7 +176,7 @@ def run_portfolio_backtest(tickers, weights_pct, start_date, end_date,
                 last_rebalance_period = period
             elif period != last_rebalance_period:
                 for t, w in zip(tickers, weights):
-                    shares[t] = (total_value * w) / data[t]['Close'].loc[d]
+                    shares[t] = (total_value * w) / data[t]['Price'].loc[d]
                 last_rebalance_period = period
 
         portfolio_history.append(total_value)
@@ -213,7 +184,7 @@ def run_portfolio_backtest(tickers, weights_pct, start_date, end_date,
     result = pd.DataFrame({'Portfolio_Value': portfolio_history}, index=dates)
     cashflows.append((dates[-1], result['Portfolio_Value'].iloc[-1]))
 
-    asset_returns = pd.DataFrame({t: data[t]['Close'].pct_change() for t in tickers})
+    asset_returns = pd.DataFrame({t: data[t]['Price'].pct_change() for t in tickers})
 
     return result, withdrawn_total, cashflows, asset_returns, meta
 
