@@ -20,7 +20,10 @@ WITHDRAW_LABEL = {'none': '없음', 'monthly_fixed': '매월 고정금액', 'ann
 st.subheader("Parameters")
 c1, c2, c3, c4 = st.columns(4)
 with c1:
-    start_date = st.date_input("시작일", value=pd.to_datetime("2015-01-01"))
+    start_date = st.date_input(
+        "시작일", value=pd.to_datetime("2015-01-01"),
+        min_value=pd.to_datetime("1970-01-01"), max_value=pd.to_datetime("today"),
+    )
 with c2:
     end_date = st.date_input("종료일", value=pd.to_datetime("today"))
 with c3:
@@ -115,26 +118,40 @@ if run:
         benchmark_returns = None
         bench_result = None
         bench_name = None
+        date_notices = []
+        requested_start = pd.Timestamp(start_date)
+
+        def _check_date_adjustment(label, meta):
+            eff_start = meta['effective_start']
+            if eff_start > requested_start:
+                limiting = [t for t, d in meta['first_dates'].items() if d == eff_start]
+                date_notices.append(
+                    f"**{label}**: 요청한 시작일({requested_start.date()})보다 "
+                    f"'{', '.join(limiting)}' 상장일이 늦어, **{eff_start.date()}**부터 계산했습니다."
+                )
+
         if use_benchmark and benchmark.strip():
             bench_name = benchmark.strip().upper()
             try:
                 # 벤치마크도 포트폴리오와 동일하게 (1) 배당 재투자(총수익) 기준,
                 # (2) 사용자가 설정한 정기 인출 조건을 그대로 적용해서 계산
                 # (인출 조건이 다르면 포트폴리오와 벤치마크를 공정하게 비교할 수 없음)
-                bench_result, bench_withdrawn, bench_cashflows, bench_asset_returns = run_portfolio_backtest(
+                bench_result, bench_withdrawn, bench_cashflows, bench_asset_returns, bench_meta = run_portfolio_backtest(
                     [bench_name], [100], str(start_date), str(end_date),
                     initial_investment, withdrawal, 'none'
                 )
                 benchmark_returns = bench_result['Portfolio_Value'].pct_change()
+                _check_date_adjustment(f"{bench_name} (벤치마크)", bench_meta)
             except Exception as e:
                 st.warning(f"벤치마크 데이터 조회 실패: {e}")
 
         for cfg in valid_configs:
             try:
-                result, withdrawn, cashflows, asset_returns = run_portfolio_backtest(
+                result, withdrawn, cashflows, asset_returns, cfg_meta = run_portfolio_backtest(
                     cfg["tickers"], cfg["weights"], str(start_date), str(end_date),
                     initial_investment, withdrawal, cfg["rebalance"]
                 )
+                _check_date_adjustment(cfg["name"], cfg_meta)
             except Exception as e:
                 st.error(f"[{cfg['name']}] 백테스트 실패: {e}")
                 continue
@@ -167,12 +184,18 @@ if run:
     st.session_state['bt_results'] = results
     st.session_state['bt_metrics_rows'] = metrics_rows
     st.session_state['bt_rolling_all'] = rolling_all
+    st.session_state['bt_date_notices'] = date_notices
 
 # ============================================================
 # 4. 결과 표시 (세션에 저장된 결과가 있으면 항상 표시)
 # ============================================================
 if 'bt_results' in st.session_state:
     results = st.session_state['bt_results']
+    if st.session_state.get('bt_date_notices'):
+        st.info(
+            "일부 종목의 상장일이 요청한 시작일보다 늦어 자동으로 조정되었습니다.\n\n"
+            + "\n\n".join(st.session_state['bt_date_notices'])
+        )
     metrics_rows = st.session_state['bt_metrics_rows']
     rolling_all = st.session_state['bt_rolling_all']
 

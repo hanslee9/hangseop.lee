@@ -16,6 +16,7 @@ import streamlit as st
 @st.cache_data(show_spinner=False, ttl=3600)
 def load_price_data(tickers, start_date, end_date):
     data = {}
+    first_dates = {}
     for t in tickers:
         # auto_adjust=False: 원본(비조정) 종가를 받아야 Dividends/Stock Splits를
         # 아래에서 수동으로 반영할 때 이중 반영(더블 카운팅)이 발생하지 않음
@@ -24,8 +25,19 @@ def load_price_data(tickers, start_date, end_date):
             raise ValueError(f"{t}: 데이터를 가져오지 못했습니다. 티커를 확인하세요.")
         df.index = df.index.tz_localize(None)
         data[t] = df[['Close', 'Dividends', 'Stock Splits']]
+        # yfinance는 요청한 시작일이 상장일 이전이어도 실제 상장일부터의 데이터만
+        # 돌려주므로, 각 종목의 실제 데이터 시작일을 그대로 기록해두면 됨
+        first_dates[t] = df.index.min()
 
-    all_dates = sorted(set().union(*[df.index for df in data.values()]))
+    # 포트폴리오 공통 시작일 = 여러 종목 중 "가장 늦게 상장된" 종목의 시작일
+    # (그래야 모든 종목이 동시에 데이터를 갖는 구간부터 계산 가능)
+    effective_start = max(first_dates.values())
+    effective_end = min(df.index.max() for df in data.values())
+
+    all_dates = sorted(
+        d for d in set().union(*[df.index for df in data.values()])
+        if effective_start <= d <= effective_end
+    )
     for t in data:
         df = data[t].reindex(all_dates)
         # Close만 직전 값으로 채움. Dividends/Stock Splits를 ffill하면
@@ -36,7 +48,8 @@ def load_price_data(tickers, start_date, end_date):
         df['Stock Splits'] = df['Stock Splits'].fillna(0)
         data[t] = df
 
-    return data, pd.DatetimeIndex(all_dates)
+    meta = {'effective_start': effective_start, 'effective_end': effective_end, 'first_dates': first_dates}
+    return data, pd.DatetimeIndex(all_dates), meta
 
 
 def run_portfolio_backtest(tickers, weights_pct, start_date, end_date,
@@ -50,7 +63,7 @@ def run_portfolio_backtest(tickers, weights_pct, start_date, end_date,
     weights = np.array(weights_pct, dtype=float)
     weights = weights / weights.sum()
 
-    data, dates = load_price_data(tickers, start_date, end_date)
+    data, dates, meta = load_price_data(tickers, start_date, end_date)
 
     shares = {}
     for t, w in zip(tickers, weights):
@@ -112,7 +125,7 @@ def run_portfolio_backtest(tickers, weights_pct, start_date, end_date,
 
     asset_returns = pd.DataFrame({t: data[t]['Close'].pct_change() for t in tickers})
 
-    return result, withdrawn_total, cashflows, asset_returns
+    return result, withdrawn_total, cashflows, asset_returns, meta
 
 
 def compute_drawdown_periods(pv):
