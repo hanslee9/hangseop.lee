@@ -85,7 +85,10 @@ for i, tab in enumerate(tabs):
                 "Weight(%)": st.column_config.NumberColumn("비중(%)", min_value=0, max_value=100, step=1),
             },
         )
-        edited = edited[edited["Ticker"].astype(str).str.strip() != ""]
+        edited = edited.copy()
+        edited["Ticker"] = edited["Ticker"].fillna("").astype(str).str.strip()
+        edited["Weight(%)"] = pd.to_numeric(edited["Weight(%)"], errors="coerce").fillna(0)
+        edited = edited[edited["Ticker"] != ""]
         edited = edited.head(20)
 
         total_w = edited["Weight(%)"].sum() if len(edited) else 0
@@ -96,7 +99,7 @@ for i, tab in enumerate(tabs):
 
         portfolio_configs.append({
             "name": name, "rebalance": rebal,
-            "tickers": [t.strip().upper() for t in edited["Ticker"].tolist()],
+            "tickers": [t.upper() for t in edited["Ticker"].tolist()],
             "weights": edited["Weight(%)"].tolist(),
         })
 
