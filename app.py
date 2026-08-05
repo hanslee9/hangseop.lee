@@ -1,5 +1,3 @@
-import io
-
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -17,24 +15,9 @@ st.caption("한국(.KS/.KQ)·미국 종목/ETF 혼합, 최대 20종목, 배당 �
 REBAL_LABEL = {'none': '없음(Buy&Hold)', 'M': '매월', 'Q': '매분기', 'Y': '매년'}
 WITHDRAW_LABEL = {'none': '없음', 'monthly_fixed': '매월 고정금액', 'annual_fixed': '매년 고정금액', 'annual_pct': '매년 %'}
 
-_table_counter = {'n': 0}
-
 
 def render_table(df, fmt=None, wrap_headers=True, max_col_width=78, filename="table"):
-    """표 렌더링 공용 헬퍼: 헤더는 줄바꿈해서 폭을 줄이고, 음수는 빨간색으로 표시.
-    우측 상단에 엑셀(.xlsx) 다운로드 버튼도 함께 제공."""
-    _table_counter['n'] += 1
-    key = f"dl_{filename}_{_table_counter['n']}"
-
-    buffer = io.BytesIO()
-    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-        df.to_excel(writer, sheet_name='Sheet1')
-    st.download_button(
-        "엑셀 다운로드", data=buffer.getvalue(), file_name=f"{filename}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key=key,
-    )
-
+    """표 렌더링 공용 헬퍼: 헤더는 줄바꿈해서 폭을 줄이고, 음수는 빨간색으로 표시."""
     styler = df.style
     if fmt:
         styler = styler.format(fmt)
