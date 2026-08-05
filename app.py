@@ -256,16 +256,43 @@ if 'bt_results' in st.session_state:
         for name, r in results.items():
             plot_series[name] = r["result"]["Portfolio_Value"]
 
+    if adjust_inflation:
+        st.markdown("**실질(인플레이션 반영) CAGR 비교**")
+        real_rows = []
+        for name, r in results.items():
+            pv = r["result"]["Portfolio_Value"]
+            real_pv = plot_series[name]
+            years = (pv.index[-1] - pv.index[0]).days / 365.25
+            nominal_cagr = (pv.iloc[-1] / pv.iloc[0]) ** (1 / years) - 1
+            real_cagr = (real_pv.iloc[-1] / real_pv.iloc[0]) ** (1 / years) - 1
+            real_rows.append({
+                "Portfolio": name,
+                "명목 CAGR": nominal_cagr,
+                "실질 CAGR": real_cagr,
+                "연평균 인플레이션 효과": nominal_cagr - real_cagr,
+            })
+        df_real = pd.DataFrame(real_rows).set_index("Portfolio")
+        st.dataframe(df_real.style.format("{:.2%}"), use_container_width=True)
+
     LINE_WIDTH = 1.3
 
     fig1 = go.Figure()
     for name, pv in plot_series.items():
+        normalized = pv / pv.iloc[0] * 100
         fig1.add_trace(go.Scatter(
-            x=pv.index, y=pv / pv.iloc[0] * 100, name=name,
+            x=pv.index, y=normalized, name=name,
             line=dict(width=LINE_WIDTH),
         ))
+        # 우측 끝에 실제 금액(End Value) 라벨 표시 - 인플레이션 반영 시 실질,
+        # 아닐 시 명목 값이 plot_series에 이미 반영되어 있으므로 그대로 사용
+        fig1.add_annotation(
+            x=pv.index[-1], y=normalized.iloc[-1],
+            text=f"${pv.iloc[-1]:,.0f}",
+            showarrow=False, xanchor="left", xshift=6,
+            font=dict(size=11), align="left",
+        )
     fig1.update_layout(
-        height=420, margin=dict(l=10, r=10, t=30, b=10),
+        height=420, margin=dict(l=10, r=70, t=30, b=10),
         yaxis_title="정규화 가치 (시작=100)" + ("(실질)" if adjust_inflation else ""),
         yaxis_type="log" if log_scale else "linear",
         title="가치 추이" + (" - 로그 스케일" if log_scale else ""),
