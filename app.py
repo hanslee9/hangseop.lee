@@ -323,6 +323,62 @@ if 'bt_results' in st.session_state:
     fig2.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
     st.plotly_chart(fig2, use_container_width=True)
 
+    # --- 연도별(달력연도) 수익 표: 기본 3열(Return/Balance/Profit·Loss),
+    # 인플레이션 반영 시 Real 3열(Real Return/Real Balance/Real Profit·Loss) 추가 ---
+    def build_annual_table(nominal_dict, real_dict=None):
+        rows = {}
+        for name, s_nom in nominal_dict.items():
+            annual_nom = s_nom.resample('YE').last()
+            annual_nom.index = annual_nom.index.year
+            prev_nom = s_nom.iloc[0]
+            ret, bal, pl = {}, {}, {}
+            for yr, val in annual_nom.items():
+                ret[yr] = val / prev_nom - 1
+                bal[yr] = val
+                pl[yr] = val - prev_nom
+                prev_nom = val
+            rows[(name, 'Return')] = pd.Series(ret)
+            rows[(name, 'Balance')] = pd.Series(bal)
+            rows[(name, 'Profit/Loss')] = pd.Series(pl)
+
+            if real_dict is not None:
+                s_real = real_dict[name]
+                annual_real = s_real.resample('YE').last()
+                annual_real.index = annual_real.index.year
+                prev_real = s_real.iloc[0]
+                rret, rbal, rpl = {}, {}, {}
+                for yr, val in annual_real.items():
+                    rret[yr] = val / prev_real - 1
+                    rbal[yr] = val
+                    rpl[yr] = val - prev_real
+                    prev_real = val
+                rows[(name, 'Real Return')] = pd.Series(rret)
+                rows[(name, 'Real Balance')] = pd.Series(rbal)
+                rows[(name, 'Real Profit/Loss')] = pd.Series(rpl)
+
+        df = pd.DataFrame(rows).sort_index()
+        df.columns = pd.MultiIndex.from_tuples(df.columns)
+        df.index = [f"{y}년" for y in df.index]
+        df.index.name = "기간"
+        return df
+
+    st.subheader("연도별 수익률")
+    nominal_series = {name: r["result"]["Portfolio_Value"] for name, r in results.items()}
+    real_series = plot_series if adjust_inflation else None
+
+    df_annual = build_annual_table(nominal_series, real_series)
+
+    fmt_annual = {}
+    for name in results.keys():
+        fmt_annual[(name, 'Return')] = "{:.2%}"
+        fmt_annual[(name, 'Balance')] = "{:,.0f}"
+        fmt_annual[(name, 'Profit/Loss')] = "{:,.0f}"
+        if adjust_inflation:
+            fmt_annual[(name, 'Real Return')] = "{:.2%}"
+            fmt_annual[(name, 'Real Balance')] = "{:,.0f}"
+            fmt_annual[(name, 'Real Profit/Loss')] = "{:,.0f}"
+    st.dataframe(df_annual.style.format(fmt_annual), use_container_width=True)
+
     # --- Rolling Return 요약 표 (Portfolio × Roll Period를 행으로 풀어써서
     # 포트폴리오 개수가 늘어나도 표가 옆으로 늘어나지 않도록 함) ---
     st.subheader("Rolling Returns")
