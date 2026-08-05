@@ -1,3 +1,5 @@
+import io
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -15,9 +17,24 @@ st.caption("한국(.KS/.KQ)·미국 종목/ETF 혼합, 최대 20종목, 배당 �
 REBAL_LABEL = {'none': '없음(Buy&Hold)', 'M': '매월', 'Q': '매분기', 'Y': '매년'}
 WITHDRAW_LABEL = {'none': '없음', 'monthly_fixed': '매월 고정금액', 'annual_fixed': '매년 고정금액', 'annual_pct': '매년 %'}
 
+_table_counter = {'n': 0}
 
-def render_table(df, fmt=None, wrap_headers=True, max_col_width=78):
-    """표 렌더링 공용 헬퍼: 헤더는 줄바꿈해서 폭을 줄이고, 음수는 빨간색으로 표시"""
+
+def render_table(df, fmt=None, wrap_headers=True, max_col_width=78, filename="table"):
+    """표 렌더링 공용 헬퍼: 헤더는 줄바꿈해서 폭을 줄이고, 음수는 빨간색으로 표시.
+    우측 상단에 엑셀(.xlsx) 다운로드 버튼도 함께 제공."""
+    _table_counter['n'] += 1
+    key = f"dl_{filename}_{_table_counter['n']}"
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name='Sheet1')
+    st.download_button(
+        "엑셀 다운로드", data=buffer.getvalue(), file_name=f"{filename}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=key,
+    )
+
     styler = df.style
     if fmt:
         styler = styler.format(fmt)
@@ -254,7 +271,7 @@ if 'bt_results' in st.session_state:
         'Ulcer Index': "{:.2f}", 'UPI': "{:.2f}",
         'Diversification Ratio': "{:.2f}", 'Beta': "{:.2f}",
     })
-    render_table(df_metrics, fmt)
+    render_table(df_metrics, fmt, filename="성과지표_요약")
 
     # --- 포트폴리오 가치 추이 & 누적 수익률 ---
     st.subheader("포트폴리오 가치 추이 & 누적 수익률")
@@ -299,7 +316,7 @@ if 'bt_results' in st.session_state:
                 "연평균 인플레이션 효과": nominal_cagr - real_cagr,
             })
         df_real = pd.DataFrame(real_rows).set_index("Portfolio")
-        render_table(df_real, "{:.2%}")
+        render_table(df_real, "{:.2%}", filename="실질_CAGR_비교")
 
     LINE_WIDTH = 1.8
 
@@ -410,7 +427,7 @@ if 'bt_results' in st.session_state:
             fmt_annual[(name, 'Real Return')] = "{:.2%}"
             fmt_annual[(name, 'Real Balance')] = "{:,.0f}"
             fmt_annual[(name, 'Real Profit/Loss')] = "{:,.0f}"
-    render_table(df_annual, fmt_annual)
+    render_table(df_annual, fmt_annual, filename="연도별_수익률")
 
     # --- Rolling Return 요약 표 (Portfolio × Roll Period를 행으로 풀어써서
     # 포트폴리오 개수가 늘어나도 표가 옆으로 늘어나지 않도록 함) ---
@@ -427,7 +444,7 @@ if 'bt_results' in st.session_state:
                 })
     if table_rows:
         df_rolling = pd.DataFrame(table_rows).set_index(["Roll Period", "Portfolio"])
-        render_table(df_rolling, "{:.2%}")
+        render_table(df_rolling, "{:.2%}", filename="Rolling_Returns")
 
     # --- Rolling Return 그래프: 기간별 탭 안에 모든 포트폴리오를 한 그래프에 겹쳐 표시 ---
     st.subheader("Annualized Rolling Return")

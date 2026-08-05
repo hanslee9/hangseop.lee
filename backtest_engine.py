@@ -13,6 +13,21 @@ from scipy.optimize import brentq
 import streamlit as st
 
 
+def clean_price_outliers(price, window=21, factor=3.0):
+    """
+    Adj Close(총수익 조정종가)는 원래 연속적이어야 하는 시리즈이므로, 직전
+    window거래일(과거 구간만) 중앙값 대비 factor배 이상 벗어나는 값은 정상적인
+    시장 움직임이 아니라 데이터 제공사(Yahoo Finance) 측 오류일 가능성이 매우
+    높다. 그런 값은 선형보간으로 대체한다.
+    """
+    trailing_median = price.rolling(window, min_periods=1).median().shift(1).bfill()
+    ratio = price / trailing_median
+    is_outlier = (ratio > factor) | (ratio < 1 / factor)
+    cleaned = price.mask(is_outlier)
+    cleaned = cleaned.interpolate(method='linear').ffill().bfill()
+    return cleaned
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def load_price_data(tickers, start_date, end_date):
     """
@@ -29,7 +44,9 @@ def load_price_data(tickers, start_date, end_date):
         if df.empty:
             raise ValueError(f"{t}: 데이터를 가져오지 못했습니다. 티커를 확인하세요.")
         df.index = df.index.tz_localize(None)
-        data[t] = df[['Adj Close']].rename(columns={'Adj Close': 'Price'})
+        df = df[['Adj Close']].rename(columns={'Adj Close': 'Price'}).copy()
+        df['Price'] = clean_price_outliers(df['Price'])
+        data[t] = df
         # yfinance는 요청한 시작일이 상장일 이전이어도 실제 상장일부터의 데이터만
         # 돌려주므로, 각 종목의 실제 데이터 시작일을 그대로 기록해두면 됨
         first_dates[t] = df.index.min()
