@@ -1,3 +1,5 @@
+import io
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -15,13 +17,39 @@ st.caption("한국(.KS/.KQ)·미국 종목/ETF 혼합, 최대 20종목, 배당 �
 REBAL_LABEL = {'none': '없음(Buy&Hold)', 'M': '매월', 'Q': '매분기', 'Y': '매년'}
 WITHDRAW_LABEL = {'none': '없음', 'monthly_fixed': '매월 고정금액', 'annual_fixed': '매년 고정금액', 'annual_pct': '매년 %'}
 
+_table_counter = {'n': 0}
+GROUP_SHADE_PALETTE = ['#EAF2FB', '#FBEAEA']  # 옅은 파랑 / 옅은 붉은색 번갈아
 
-def render_table(df, fmt=None, wrap_headers=True, max_col_width=78, filename="table"):
-    """표 렌더링 공용 헬퍼: 헤더는 줄바꿈해서 폭을 줄이고, 음수는 빨간색으로 표시."""
+
+def render_table(df, fmt=None, wrap_headers=True, max_col_width=78, filename="table", shade_groups=False):
+    """표 렌더링 공용 헬퍼: 헤더는 줄바꿈해서 폭을 줄이고, 음수는 빨간색으로 표시.
+    shade_groups=True면 MultiIndex 컬럼의 최상위 그룹(포트폴리오)별로 옅은 배경색을
+    번갈아 적용한다. 우측 상단에 엑셀(.xlsx) 다운로드 버튼도 함께 제공."""
+    _table_counter['n'] += 1
+    key = f"dl_{filename}_{_table_counter['n']}"
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name='Sheet1')
+    st.download_button(
+        "엑셀 다운로드", data=buffer.getvalue(), file_name=f"{filename}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=key,
+    )
+
     styler = df.style
     if fmt:
         styler = styler.format(fmt)
     styler = styler.map(lambda v: 'color:#c0392b' if isinstance(v, (int, float)) and v < 0 else '')
+
+    if shade_groups and isinstance(df.columns, pd.MultiIndex):
+        groups = list(dict.fromkeys(df.columns.get_level_values(0)))
+        for i, g in enumerate(groups):
+            color = GROUP_SHADE_PALETTE[i % len(GROUP_SHADE_PALETTE)]
+            cols = df.columns[df.columns.get_level_values(0) == g]
+            styler = styler.set_properties(
+                subset=pd.IndexSlice[:, cols], **{'background-color': color}
+            )
 
     header_props = [('font-size', '11px'), ('padding', '4px 5px'), ('text-align', 'center'),
                      ('background-color', '#f0f2f6')]
@@ -329,20 +357,27 @@ if 'bt_results' in st.session_state:
         yaxis_type="log" if log_scale else "linear",
         title="가치 추이" + (" - 로그 스케일" if log_scale else ""),
     )
-    st.plotly_chart(fig1, use_container_width=True)
+    st.plotly_chart(fig1, use_container_width=True, config={"toImageButtonOptions": {"filename": "가치추이"}})
 
     fig1b = go.Figure()
     for name, pv in plot_series.items():
+        pct = (pv / pv.iloc[0] - 1) * 100
         fig1b.add_trace(go.Scatter(
-            x=pv.index, y=(pv / pv.iloc[0] - 1) * 100, name=name,
+            x=pv.index, y=pct, name=name,
             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
         ))
+        fig1b.add_annotation(
+            x=pv.index[-1], y=pct.iloc[-1],
+            text=f"${pv.iloc[-1]:,.0f}",
+            showarrow=False, xanchor="left", xshift=6,
+            font=dict(size=11, color=COLOR_MAP[name]), align="left",
+        )
     fig1b.update_layout(
-        height=420, margin=dict(l=10, r=10, t=30, b=10),
+        height=420, margin=dict(l=10, r=70, t=30, b=10),
         yaxis_title="누적 수익률 (%)" + ("(실질)" if adjust_inflation else ""),
         title="누적 수익률",
     )
-    st.plotly_chart(fig1b, use_container_width=True)
+    st.plotly_chart(fig1b, use_container_width=True, config={"toImageButtonOptions": {"filename": "누적수익률"}})
 
     # --- Drawdown ---
     st.subheader("Drawdown")
@@ -354,7 +389,7 @@ if 'bt_results' in st.session_state:
             fillcolor=hex_to_rgba(COLOR_MAP[name], 0.15),
         ))
     fig2.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, use_container_width=True, config={"toImageButtonOptions": {"filename": "drawdown"}})
 
     # --- 연도별(달력연도) 수익 표: 기본 3열(Return/Balance/Profit·Loss),
     # 인플레이션 반영 시 Real 3열(Real Return/Real Balance/Real Profit·Loss) 추가 ---
@@ -410,7 +445,7 @@ if 'bt_results' in st.session_state:
             fmt_annual[(name, 'Real Return')] = "{:.2%}"
             fmt_annual[(name, 'Real Balance')] = "{:,.0f}"
             fmt_annual[(name, 'Real Profit/Loss')] = "{:,.0f}"
-    render_table(df_annual, fmt_annual, filename="연도별_수익률")
+    render_table(df_annual, fmt_annual, filename="연도별_수익률", shade_groups=True)
 
     # --- Rolling Return 요약 표 (Portfolio × Roll Period를 행으로 풀어써서
     # 포트폴리오 개수가 늘어나도 표가 옆으로 늘어나지 않도록 함) ---
@@ -445,4 +480,4 @@ if 'bt_results' in st.session_state:
                             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
                         ))
                 fig3.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
-                st.plotly_chart(fig3, use_container_width=True)
+                st.plotly_chart(fig3, use_container_width=True, config={"toImageButtonOptions": {"filename": f"rolling_return_{period}"}})
