@@ -345,7 +345,7 @@ if 'bt_results' in st.session_state:
         # 마지막 지점에만 금액 텍스트를 붙임(trace 자체의 text) - 별도 annotation
         # 레이어 방식은 로그축에서 표시가 누락되는 경우가 있어, 데이터 포인트에
         # 직접 붙이는 방식이 더 안정적임
-        text_labels = [""] * (len(pv) - 1) + [f"${pv.iloc[-1]:,.0f}"]
+        text_labels = [""] * (len(pv) - 1) + [f"{pv.iloc[-1]:,.0f}"]
         fig1.add_trace(go.Scatter(
             x=pv.index, y=normalized, name=name, mode="lines+text",
             text=text_labels, textposition="middle right",
@@ -353,11 +353,12 @@ if 'bt_results' in st.session_state:
             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
         ))
     fig1.update_layout(
-        height=460, margin=dict(l=10, r=70, t=30, b=60),
+        height=480, margin=dict(l=10, r=75, t=30, b=90),
         yaxis_title="정규화 가치 (시작=100)" + ("(실질)" if adjust_inflation else ""),
         yaxis_type="log" if log_scale else "linear",
         title="Performance Summary" + (" - 로그 스케일" if log_scale else ""),
-        legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5),
     )
     st.plotly_chart(
         fig1, use_container_width=True,
