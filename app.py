@@ -356,11 +356,12 @@ if 'bt_results' in st.session_state:
             font=dict(size=11, color=COLOR_MAP[name]), align="left",
         ))
     fig1.update_layout(
-        height=420, margin=dict(l=10, r=70, t=30, b=10),
+        height=460, margin=dict(l=10, r=70, t=30, b=60),
         yaxis_title="정규화 가치 (시작=100)" + ("(실질)" if adjust_inflation else ""),
         yaxis_type="log" if log_scale else "linear",
         title="Performance Summary" + (" - 로그 스케일" if log_scale else ""),
         annotations=annotations1,
+        legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5),
     )
     st.plotly_chart(
         fig1, use_container_width=True,
