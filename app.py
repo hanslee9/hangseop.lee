@@ -450,22 +450,29 @@ if 'bt_results' in st.session_state:
             fmt_annual[(name, 'Real Profit/Loss')] = "{:,.0f}"
     render_table(df_annual, fmt_annual, filename="연도별_수익률", shade_groups=True)
 
-    # --- Rolling Return 요약 표 (Portfolio × Roll Period를 행으로 풀어써서
-    # 포트폴리오 개수가 늘어나도 표가 옆으로 늘어나지 않도록 함) ---
+    # --- Rolling Return 요약 표 (PV 스타일: 기간이 행, 포트폴리오별
+    # Average/High/Low가 열 그룹으로 나란히 배치) ---
     st.subheader("Rolling Returns")
     period_order = ['1Y', '3Y', '5Y', '7Y']
-    table_rows = []
-    for period in period_order:
-        for name in results.keys():
+    rolling_wide = {}
+    for name in results.keys():
+        for period in period_order:
             if period in rolling_all[name]:
                 s = rolling_all[name][period]
-                table_rows.append({
-                    "Roll Period": period, "Portfolio": name,
-                    "Average": s['Avg'], "High": s['Max'], "Low": s['Min'],
-                })
-    if table_rows:
-        df_rolling = pd.DataFrame(table_rows).set_index(["Roll Period", "Portfolio"])
-        render_table(df_rolling, "{:.2%}", filename="Rolling_Returns")
+                rolling_wide[(name, 'Average')] = rolling_wide.get((name, 'Average'), {})
+                rolling_wide[(name, 'Average')][period] = s['Avg']
+                rolling_wide[(name, 'High')] = rolling_wide.get((name, 'High'), {})
+                rolling_wide[(name, 'High')][period] = s['Max']
+                rolling_wide[(name, 'Low')] = rolling_wide.get((name, 'Low'), {})
+                rolling_wide[(name, 'Low')][period] = s['Min']
+    if rolling_wide:
+        df_rolling = pd.DataFrame(rolling_wide)
+        df_rolling = df_rolling.reindex([p for p in period_order if p in df_rolling.index])
+        df_rolling.columns = pd.MultiIndex.from_tuples(df_rolling.columns)
+        period_label = {'1Y': '1 year', '3Y': '3 years', '5Y': '5 years', '7Y': '7 years'}
+        df_rolling.index = [period_label.get(p, p) for p in df_rolling.index]
+        df_rolling.index.name = "Roll Period"
+        render_table(df_rolling, "{:.2%}", filename="Rolling_Returns", shade_groups=True)
 
     # --- Rolling Return 그래프: 기간별 탭 안에 모든 포트폴리오를 한 그래프에 겹쳐 표시 ---
     st.subheader("Annualized Rolling Return")
