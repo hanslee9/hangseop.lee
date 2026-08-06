@@ -355,9 +355,12 @@ if 'bt_results' in st.session_state:
         height=420, margin=dict(l=10, r=70, t=30, b=10),
         yaxis_title="정규화 가치 (시작=100)" + ("(실질)" if adjust_inflation else ""),
         yaxis_type="log" if log_scale else "linear",
-        title="가치 추이" + (" - 로그 스케일" if log_scale else ""),
+        title="Performance Summary" + (" - 로그 스케일" if log_scale else ""),
     )
-    st.plotly_chart(fig1, use_container_width=True, config={"toImageButtonOptions": {"filename": "가치추이"}})
+    st.plotly_chart(
+        fig1, use_container_width=True,
+        config={"toImageButtonOptions": {"filename": "Performance_Summary"}, "displayModeBar": True},
+    )
 
     fig1b = go.Figure()
     for name, pv in plot_series.items():
@@ -366,18 +369,15 @@ if 'bt_results' in st.session_state:
             x=pv.index, y=pct, name=name,
             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
         ))
-        fig1b.add_annotation(
-            x=pv.index[-1], y=pct.iloc[-1],
-            text=f"${pv.iloc[-1]:,.0f}",
-            showarrow=False, xanchor="left", xshift=6,
-            font=dict(size=11, color=COLOR_MAP[name]), align="left",
-        )
     fig1b.update_layout(
-        height=420, margin=dict(l=10, r=70, t=30, b=10),
+        height=420, margin=dict(l=10, r=10, t=30, b=10),
         yaxis_title="누적 수익률 (%)" + ("(실질)" if adjust_inflation else ""),
         title="누적 수익률",
     )
-    st.plotly_chart(fig1b, use_container_width=True, config={"toImageButtonOptions": {"filename": "누적수익률"}})
+    st.plotly_chart(
+        fig1b, use_container_width=True,
+        config={"toImageButtonOptions": {"filename": "누적수익률"}, "displayModeBar": True},
+    )
 
     # --- Drawdown ---
     st.subheader("Drawdown")
@@ -389,7 +389,7 @@ if 'bt_results' in st.session_state:
             fillcolor=hex_to_rgba(COLOR_MAP[name], 0.15),
         ))
     fig2.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
-    st.plotly_chart(fig2, use_container_width=True, config={"toImageButtonOptions": {"filename": "drawdown"}})
+    st.plotly_chart(fig2, use_container_width=True, config={"toImageButtonOptions": {"filename": "drawdown"}, "displayModeBar": True})
 
     # --- 연도별(달력연도) 수익 표: 기본 3열(Return/Balance/Profit·Loss),
     # 인플레이션 반영 시 Real 3열(Real Return/Real Balance/Real Profit·Loss) 추가 ---
@@ -480,4 +480,4 @@ if 'bt_results' in st.session_state:
                             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
                         ))
                 fig3.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
-                st.plotly_chart(fig3, use_container_width=True, config={"toImageButtonOptions": {"filename": f"rolling_return_{period}"}})
+                st.plotly_chart(fig3, use_container_width=True, config={"toImageButtonOptions": {"filename": f"rolling_return_{period}"}, "displayModeBar": True})
