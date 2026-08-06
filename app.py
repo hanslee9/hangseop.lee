@@ -339,31 +339,51 @@ if 'bt_results' in st.session_state:
         r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
         return f"rgba({r},{g},{b},{alpha})"
 
+    BOTTOM_LEGEND = dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5)
+
+    def spread_label_positions(values, min_gap_log=0.045):
+        """엔드값 라벨이 서로 가까워서 겹치는 경우, 로그공간 기준 최소 간격을
+        확보하도록 라벨의 표시 위치만 살짝 밀어낸다(실제 선의 위치는 그대로 둠)."""
+        items = sorted(values.items(), key=lambda kv: kv[1])
+        logs = [np.log10(v) if v > 0 else 0 for _, v in items]
+        adjusted = list(logs)
+        for i in range(1, len(adjusted)):
+            if adjusted[i] - adjusted[i - 1] < min_gap_log:
+                adjusted[i] = adjusted[i - 1] + min_gap_log
+        return {items[i][0]: 10 ** adjusted[i] for i in range(len(items))}
+
     fig1 = go.Figure()
+    end_normalized = {name: (pv / pv.iloc[0] * 100).iloc[-1] for name, pv in plot_series.items()}
+    label_y = spread_label_positions(end_normalized)
+    last_date = next(iter(plot_series.values())).index[-1]
     for name, pv in plot_series.items():
         normalized = pv / pv.iloc[0] * 100
-        # 마지막 지점에만 금액 텍스트를 붙임(trace 자체의 text) - 별도 annotation
-        # 레이어 방식은 로그축에서 표시가 누락되는 경우가 있어, 데이터 포인트에
-        # 직접 붙이는 방식이 더 안정적임
-        text_labels = [""] * (len(pv) - 1) + [f"{pv.iloc[-1]:,.0f}"]
         fig1.add_trace(go.Scatter(
-            x=pv.index, y=normalized, name=name, mode="lines+text",
-            text=text_labels, textposition="middle right",
-            textfont=dict(size=11, color=COLOR_MAP[name]),
+            x=pv.index, y=normalized, name=name,
             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
         ))
+        # 라벨은 실제 선 끝과 별개의(텍스트 전용) trace로 추가 - 값이 가까운
+        # 포트폴리오끼리 라벨이 겹치지 않도록 위치를 살짝 밀어낼 수 있고,
+        # 로그축에서도 표시가 누락되지 않는 방식(annotation 방식은 로그축에서
+        # 표시가 빠지는 경우가 있어 사용하지 않음)
+        fig1.add_trace(go.Scatter(
+            x=[last_date], y=[label_y[name]], mode="text",
+            text=[f"{pv.iloc[-1]:,.0f}"], textposition="middle right",
+            textfont=dict(size=11, color=COLOR_MAP[name]),
+            showlegend=False, hoverinfo="skip",
+        ))
     fig1.update_layout(
-        height=480, margin=dict(l=10, r=75, t=30, b=90),
+        height=480, margin=dict(l=10, r=85, t=30, b=90),
         yaxis_title="정규화 가치 (시작=100)" + ("(실질)" if adjust_inflation else ""),
         yaxis_type="log" if log_scale else "linear",
         title="Performance Summary" + (" - 로그 스케일" if log_scale else ""),
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5),
+        showlegend=True, legend=BOTTOM_LEGEND,
     )
     st.plotly_chart(
         fig1, use_container_width=True,
         config={"toImageButtonOptions": {"filename": "Performance_Summary"}, "displayModeBar": True},
     )
+
 
     fig1b = go.Figure()
     for name, pv in plot_series.items():
@@ -373,9 +393,10 @@ if 'bt_results' in st.session_state:
             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
         ))
     fig1b.update_layout(
-        height=420, margin=dict(l=10, r=10, t=30, b=10),
+        height=460, margin=dict(l=10, r=10, t=30, b=90),
         yaxis_title="누적 수익률 (%)" + ("(실질)" if adjust_inflation else ""),
         title="누적 수익률",
+        showlegend=True, legend=BOTTOM_LEGEND,
     )
     st.plotly_chart(
         fig1b, use_container_width=True,
@@ -391,7 +412,10 @@ if 'bt_results' in st.session_state:
             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
             fillcolor=hex_to_rgba(COLOR_MAP[name], 0.15),
         ))
-    fig2.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
+    fig2.update_layout(
+        height=360, margin=dict(l=10, r=10, t=10, b=90), yaxis_title="%",
+        showlegend=True, legend=BOTTOM_LEGEND,
+    )
     st.plotly_chart(fig2, use_container_width=True, config={"toImageButtonOptions": {"filename": "drawdown"}, "displayModeBar": True})
 
     # --- 연도별(달력연도) 수익 표: 기본 3열(Return/Balance/Profit·Loss),
@@ -489,5 +513,8 @@ if 'bt_results' in st.session_state:
                             x=series.index, y=series * 100, name=name,
                             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
                         ))
-                fig3.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
+                fig3.update_layout(
+                    height=420, margin=dict(l=10, r=10, t=10, b=90), yaxis_title="%",
+                    showlegend=True, legend=BOTTOM_LEGEND,
+                )
                 st.plotly_chart(fig3, use_container_width=True, config={"toImageButtonOptions": {"filename": f"rolling_return_{period}"}, "displayModeBar": True})
