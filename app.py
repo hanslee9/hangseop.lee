@@ -340,27 +340,23 @@ if 'bt_results' in st.session_state:
         return f"rgba({r},{g},{b},{alpha})"
 
     fig1 = go.Figure()
-    annotations1 = []
     for name, pv in plot_series.items():
         normalized = pv / pv.iloc[0] * 100
+        # 마지막 지점에만 금액 텍스트를 붙임(trace 자체의 text) - 별도 annotation
+        # 레이어 방식은 로그축에서 표시가 누락되는 경우가 있어, 데이터 포인트에
+        # 직접 붙이는 방식이 더 안정적임
+        text_labels = [""] * (len(pv) - 1) + [f"${pv.iloc[-1]:,.0f}"]
         fig1.add_trace(go.Scatter(
-            x=pv.index, y=normalized, name=name,
+            x=pv.index, y=normalized, name=name, mode="lines+text",
+            text=text_labels, textposition="middle right",
+            textfont=dict(size=11, color=COLOR_MAP[name]),
             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
-        ))
-        # 우측 끝에 실제 금액(End Value) 라벨 표시 - 인플레이션 반영 시 실질,
-        # 아닐 시 명목 값이 plot_series에 이미 반영되어 있으므로 그대로 사용
-        annotations1.append(dict(
-            x=pv.index[-1], y=normalized.iloc[-1], xref="x", yref="y",
-            text=f"${pv.iloc[-1]:,.0f}",
-            showarrow=False, xanchor="left", xshift=6,
-            font=dict(size=11, color=COLOR_MAP[name]), align="left",
         ))
     fig1.update_layout(
         height=460, margin=dict(l=10, r=70, t=30, b=60),
         yaxis_title="정규화 가치 (시작=100)" + ("(실질)" if adjust_inflation else ""),
         yaxis_type="log" if log_scale else "linear",
         title="Performance Summary" + (" - 로그 스케일" if log_scale else ""),
-        annotations=annotations1,
         legend=dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5),
     )
     st.plotly_chart(
