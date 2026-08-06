@@ -71,23 +71,35 @@ def load_price_data(tickers, start_date, end_date):
 def load_cpi_series(country):
     """
     country: 'US' 또는 'KR'
-    FRED(세인트루이스 연은)의 공개 CSV 엔드포인트에서 월별 CPI를 받아
+    FRED(세인트루이스 연은)의 공개 CSV 엔드포인트에서 월별 CPI **지수(index)**를 받아
     일별로 보간(linear)한 뒤 ffill/bfill한 Series를 반환한다.
-    - US: CPIAUCSL (미국 노동통계청 CPI, 매월 갱신)
-    - KR: CPALTT01KRM659N (OECD 집계 한국 CPI, Index 2015=100, 월간)
+    - US: CPIAUCSL (미국 노동통계청 CPI 지수, 매월 갱신)
+    - KR: KORCPIALLMINMEI (OECD 집계 한국 CPI 지수, Index 2015=100)
+
+    주의: FRED에는 이름이 비슷한 'CPALTT01KRM659N' 같은 시리즈도 있지만, 이건
+    지수가 아니라 "전년동월대비 증감률(%)" 시리즈라서 지수처럼 다루면 실질수익률이
+    완전히 잘못 계산된다(증감률 위에 또 증감률을 계산하는 격). 반드시 지수 레벨
+    시리즈를 사용해야 한다.
 
     공식 CPI 발표는 몇 달의 지연이 있으므로(특히 국제 미러링 시리즈),
     데이터가 없는 최근 구간은 마지막 값을 그대로 반복(flat)하지 않고
     최근 12개월 평균 월간 변화율로 오늘 날짜까지 추세를 연장한다.
     (그렇지 않으면 최근 기간의 실질수익률이 인플레이션 0%로 왜곡됨)
     """
-    series_id = 'CPIAUCSL' if country == 'US' else 'CPALTT01KRM659N'
+    series_id = 'CPIAUCSL' if country == 'US' else 'KORCPIALLMINMEI'
     url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series_id}"
     df = pd.read_csv(url)
     df.columns = ['date', 'cpi']
     df['date'] = pd.to_datetime(df['date'])
     df['cpi'] = pd.to_numeric(df['cpi'], errors='coerce')
     df = df.dropna().set_index('date')['cpi']
+
+    # CPI 지수는 월간 변동이 보통 ±2% 이내이므로, 그보다 훨씬 큰 월간 변화(결측치를
+    # 잘못된 값으로 채웠거나, 기준연도 변경으로 인한 불연속 등)는 이상치로 보고
+    # 선형보간으로 대체한다.
+    monthly_change = df.pct_change()
+    is_outlier = monthly_change.abs() > 0.10
+    df = df.mask(is_outlier).interpolate(method='linear').ffill().bfill()
 
     today = pd.Timestamp.today().normalize()
     last_date = df.index.max()
