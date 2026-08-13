@@ -1,3 +1,5 @@
+import io
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -15,13 +17,39 @@ st.caption("한국(.KS/.KQ)·미국 종목/ETF 혼합, 최대 20종목, 배당 �
 REBAL_LABEL = {'none': '없음(Buy&Hold)', 'M': '매월', 'Q': '매분기', 'Y': '매년'}
 WITHDRAW_LABEL = {'none': '없음', 'monthly_fixed': '매월 고정금액', 'annual_fixed': '매년 고정금액', 'annual_pct': '매년 %'}
 
+_table_counter = {'n': 0}
+GROUP_SHADE_PALETTE = ['#EAF2FB', '#FBEAEA']  # 옅은 파랑 / 옅은 붉은색 번갈아
 
-def render_table(df, fmt=None, wrap_headers=True, max_col_width=78, filename="table"):
-    """표 렌더링 공용 헬퍼: 헤더는 줄바꿈해서 폭을 줄이고, 음수는 빨간색으로 표시."""
+
+def render_table(df, fmt=None, wrap_headers=True, max_col_width=78, filename="table", shade_groups=False):
+    """표 렌더링 공용 헬퍼: 헤더는 줄바꿈해서 폭을 줄이고, 음수는 빨간색으로 표시.
+    shade_groups=True면 MultiIndex 컬럼의 최상위 그룹(포트폴리오)별로 옅은 배경색을
+    번갈아 적용한다. 우측 상단에 엑셀(.xlsx) 다운로드 버튼도 함께 제공."""
+    _table_counter['n'] += 1
+    key = f"dl_{filename}_{_table_counter['n']}"
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name='Sheet1')
+    st.download_button(
+        "엑셀 다운로드", data=buffer.getvalue(), file_name=f"{filename}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=key,
+    )
+
     styler = df.style
     if fmt:
         styler = styler.format(fmt)
     styler = styler.map(lambda v: 'color:#c0392b' if isinstance(v, (int, float)) and v < 0 else '')
+
+    if shade_groups and isinstance(df.columns, pd.MultiIndex):
+        groups = list(dict.fromkeys(df.columns.get_level_values(0)))
+        for i, g in enumerate(groups):
+            color = GROUP_SHADE_PALETTE[i % len(GROUP_SHADE_PALETTE)]
+            cols = df.columns[df.columns.get_level_values(0) == g]
+            styler = styler.set_properties(
+                subset=pd.IndexSlice[:, cols], **{'background-color': color}
+            )
 
     header_props = [('font-size', '11px'), ('padding', '4px 5px'), ('text-align', 'center'),
                      ('background-color', '#f0f2f6')]
@@ -96,7 +124,10 @@ for i, tab in enumerate(tabs):
             rebal = st.selectbox("리밸런싱", options=list(REBAL_LABEL.keys()),
                                   format_func=lambda k: REBAL_LABEL[k], key=f"rebal_{i}")
 
-        default_df = pd.DataFrame({"Ticker": ["VOO", "SCHD"], "Weight(%)": [60, 40]})
+        if i == 0:
+            default_df = pd.DataFrame({"Ticker": ["VOO", "SCHD"], "Weight(%)": [60, 40]})
+        else:
+            default_df = pd.DataFrame({"Ticker": ["", ""], "Weight(%)": [0, 0]})
         edited = st.data_editor(
             default_df, num_rows="dynamic", key=f"editor_{i}",
             use_container_width=True,
@@ -308,41 +339,69 @@ if 'bt_results' in st.session_state:
         r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
         return f"rgba({r},{g},{b},{alpha})"
 
+    BOTTOM_LEGEND = dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5)
+
+    def spread_label_positions(values, min_gap_log=0.045):
+        """엔드값 라벨이 서로 가까워서 겹치는 경우, 로그공간 기준 최소 간격을
+        확보하도록 라벨의 표시 위치만 살짝 밀어낸다(실제 선의 위치는 그대로 둠)."""
+        items = sorted(values.items(), key=lambda kv: kv[1])
+        logs = [np.log10(v) if v > 0 else 0 for _, v in items]
+        adjusted = list(logs)
+        for i in range(1, len(adjusted)):
+            if adjusted[i] - adjusted[i - 1] < min_gap_log:
+                adjusted[i] = adjusted[i - 1] + min_gap_log
+        return {items[i][0]: 10 ** adjusted[i] for i in range(len(items))}
+
     fig1 = go.Figure()
+    end_normalized = {name: (pv / pv.iloc[0] * 100).iloc[-1] for name, pv in plot_series.items()}
+    label_y = spread_label_positions(end_normalized)
+    last_date = next(iter(plot_series.values())).index[-1]
     for name, pv in plot_series.items():
         normalized = pv / pv.iloc[0] * 100
         fig1.add_trace(go.Scatter(
             x=pv.index, y=normalized, name=name,
             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
         ))
-        # 우측 끝에 실제 금액(End Value) 라벨 표시 - 인플레이션 반영 시 실질,
-        # 아닐 시 명목 값이 plot_series에 이미 반영되어 있으므로 그대로 사용
-        fig1.add_annotation(
-            x=pv.index[-1], y=normalized.iloc[-1],
-            text=f"${pv.iloc[-1]:,.0f}",
-            showarrow=False, xanchor="left", xshift=6,
-            font=dict(size=11, color=COLOR_MAP[name]), align="left",
-        )
+        # 라벨은 실제 선 끝과 별개의(텍스트 전용) trace로 추가 - 값이 가까운
+        # 포트폴리오끼리 라벨이 겹치지 않도록 위치를 살짝 밀어낼 수 있고,
+        # 로그축에서도 표시가 누락되지 않는 방식(annotation 방식은 로그축에서
+        # 표시가 빠지는 경우가 있어 사용하지 않음)
+        fig1.add_trace(go.Scatter(
+            x=[last_date], y=[label_y[name]], mode="text",
+            text=[f"{pv.iloc[-1]:,.0f}"], textposition="middle right",
+            textfont=dict(size=11, color=COLOR_MAP[name]),
+            showlegend=False, hoverinfo="skip",
+        ))
     fig1.update_layout(
-        height=420, margin=dict(l=10, r=70, t=30, b=10),
+        height=480, margin=dict(l=10, r=85, t=30, b=90),
         yaxis_title="정규화 가치 (시작=100)" + ("(실질)" if adjust_inflation else ""),
         yaxis_type="log" if log_scale else "linear",
-        title="가치 추이" + (" - 로그 스케일" if log_scale else ""),
+        title="Performance Summary" + (" - 로그 스케일" if log_scale else ""),
+        showlegend=True, legend=BOTTOM_LEGEND,
     )
-    st.plotly_chart(fig1, use_container_width=True)
+    st.plotly_chart(
+        fig1, use_container_width=True,
+        config={"toImageButtonOptions": {"filename": "Performance_Summary"}, "displayModeBar": True},
+    )
+
 
     fig1b = go.Figure()
     for name, pv in plot_series.items():
+        pct = (pv / pv.iloc[0] - 1) * 100
         fig1b.add_trace(go.Scatter(
-            x=pv.index, y=(pv / pv.iloc[0] - 1) * 100, name=name,
+            x=pv.index, y=pct, name=name,
             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
         ))
     fig1b.update_layout(
-        height=420, margin=dict(l=10, r=10, t=30, b=10),
+        height=460, margin=dict(l=10, r=10, t=30, b=90),
         yaxis_title="누적 수익률 (%)" + ("(실질)" if adjust_inflation else ""),
         title="누적 수익률",
+        showlegend=True, legend=BOTTOM_LEGEND,
     )
-    st.plotly_chart(fig1b, use_container_width=True)
+    st.plotly_chart(
+        fig1b, use_container_width=True,
+        config={"toImageButtonOptions": {"filename": "누적수익률"}, "displayModeBar": True},
+    )
 
     # --- Drawdown ---
     st.subheader("Drawdown")
@@ -353,8 +412,11 @@ if 'bt_results' in st.session_state:
             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
             fillcolor=hex_to_rgba(COLOR_MAP[name], 0.15),
         ))
-    fig2.update_layout(height=320, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
-    st.plotly_chart(fig2, use_container_width=True)
+    fig2.update_layout(
+        height=360, margin=dict(l=10, r=10, t=10, b=90), yaxis_title="%",
+        showlegend=True, legend=BOTTOM_LEGEND,
+    )
+    st.plotly_chart(fig2, use_container_width=True, config={"toImageButtonOptions": {"filename": "drawdown"}, "displayModeBar": True})
 
     # --- 연도별(달력연도) 수익 표: 기본 3열(Return/Balance/Profit·Loss),
     # 인플레이션 반영 시 Real 3열(Real Return/Real Balance/Real Profit·Loss) 추가 ---
@@ -410,24 +472,31 @@ if 'bt_results' in st.session_state:
             fmt_annual[(name, 'Real Return')] = "{:.2%}"
             fmt_annual[(name, 'Real Balance')] = "{:,.0f}"
             fmt_annual[(name, 'Real Profit/Loss')] = "{:,.0f}"
-    render_table(df_annual, fmt_annual, filename="연도별_수익률")
+    render_table(df_annual, fmt_annual, filename="연도별_수익률", shade_groups=True)
 
-    # --- Rolling Return 요약 표 (Portfolio × Roll Period를 행으로 풀어써서
-    # 포트폴리오 개수가 늘어나도 표가 옆으로 늘어나지 않도록 함) ---
+    # --- Rolling Return 요약 표 (PV 스타일: 기간이 행, 포트폴리오별
+    # Average/High/Low가 열 그룹으로 나란히 배치) ---
     st.subheader("Rolling Returns")
     period_order = ['1Y', '3Y', '5Y', '7Y']
-    table_rows = []
-    for period in period_order:
-        for name in results.keys():
+    rolling_wide = {}
+    for name in results.keys():
+        for period in period_order:
             if period in rolling_all[name]:
                 s = rolling_all[name][period]
-                table_rows.append({
-                    "Roll Period": period, "Portfolio": name,
-                    "Average": s['Avg'], "High": s['Max'], "Low": s['Min'],
-                })
-    if table_rows:
-        df_rolling = pd.DataFrame(table_rows).set_index(["Roll Period", "Portfolio"])
-        render_table(df_rolling, "{:.2%}", filename="Rolling_Returns")
+                rolling_wide[(name, 'Average')] = rolling_wide.get((name, 'Average'), {})
+                rolling_wide[(name, 'Average')][period] = s['Avg']
+                rolling_wide[(name, 'High')] = rolling_wide.get((name, 'High'), {})
+                rolling_wide[(name, 'High')][period] = s['Max']
+                rolling_wide[(name, 'Low')] = rolling_wide.get((name, 'Low'), {})
+                rolling_wide[(name, 'Low')][period] = s['Min']
+    if rolling_wide:
+        df_rolling = pd.DataFrame(rolling_wide)
+        df_rolling = df_rolling.reindex([p for p in period_order if p in df_rolling.index])
+        df_rolling.columns = pd.MultiIndex.from_tuples(df_rolling.columns)
+        period_label = {'1Y': '1 year', '3Y': '3 years', '5Y': '5 years', '7Y': '7 years'}
+        df_rolling.index = [period_label.get(p, p) for p in df_rolling.index]
+        df_rolling.index.name = "Roll Period"
+        render_table(df_rolling, "{:.2%}", filename="Rolling_Returns", shade_groups=True)
 
     # --- Rolling Return 그래프: 기간별 탭 안에 모든 포트폴리오를 한 그래프에 겹쳐 표시 ---
     st.subheader("Annualized Rolling Return")
@@ -444,5 +513,8 @@ if 'bt_results' in st.session_state:
                             x=series.index, y=series * 100, name=name,
                             line=dict(width=LINE_WIDTH, color=COLOR_MAP[name]),
                         ))
-                fig3.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="%")
-                st.plotly_chart(fig3, use_container_width=True)
+                fig3.update_layout(
+                    height=420, margin=dict(l=10, r=10, t=10, b=90), yaxis_title="%",
+                    showlegend=True, legend=BOTTOM_LEGEND,
+                )
+                st.plotly_chart(fig3, use_container_width=True, config={"toImageButtonOptions": {"filename": f"rolling_return_{period}"}, "displayModeBar": True})
