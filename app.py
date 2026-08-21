@@ -71,7 +71,7 @@ c1, c2, c3, c4 = st.columns(4)
 with c1:
     start_date = st.date_input(
         "시작일", value=pd.to_datetime("2015-01-01"),
-        min_value=pd.to_datetime("1970-01-01"), max_value=pd.to_datetime("today"),
+        min_value=pd.to_datetime("1900-01-01"), max_value=pd.to_datetime("today"),
     )
 with c2:
     end_date = st.date_input("종료일", value=pd.to_datetime("today"))
