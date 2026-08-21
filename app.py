@@ -112,17 +112,25 @@ with col_remove:
     if st.button("− 포트폴리오 제거") and st.session_state.n_portfolios > 1:
         st.session_state.n_portfolios -= 1
 
+# 모드 판별: 포트폴리오가 1개면 "BH vs 리밸런싱 주기 비교", 2개 이상이면
+# "동일 리밸런싱 기준으로 포트폴리오 간 비교"
+is_single_mode = st.session_state.n_portfolios == 1
+REBAL_PERIODS = [k for k in REBAL_LABEL.keys() if k != 'none']  # ['M', 'Q', 'Y']
+
+global_rebalance = 'none'
+if not is_single_mode:
+    global_rebalance = st.selectbox(
+        "리밸런싱 (전체 포트폴리오 공통 기준)",
+        options=list(REBAL_LABEL.keys()), format_func=lambda k: REBAL_LABEL[k],
+        index=0, key="global_rebalance",
+    )
+
 tabs = st.tabs([f"Portfolio {i+1}" for i in range(st.session_state.n_portfolios)])
 portfolio_configs = []
 
 for i, tab in enumerate(tabs):
     with tab:
-        colname, colrebal = st.columns([2, 1])
-        with colname:
-            name = st.text_input("이름", value=f"Portfolio {i+1}", key=f"name_{i}")
-        with colrebal:
-            rebal = st.selectbox("리밸런싱", options=list(REBAL_LABEL.keys()),
-                                  format_func=lambda k: REBAL_LABEL[k], key=f"rebal_{i}")
+        name = st.text_input("이름", value=f"Portfolio {i+1}", key=f"name_{i}")
 
         if i == 0:
             default_df = pd.DataFrame({"Ticker": ["VOO", "SCHD"], "Weight(%)": [60, 40]})
@@ -148,8 +156,22 @@ for i, tab in enumerate(tabs):
         else:
             st.warning(f"비중 합계: {total_w:.1f}% (100%가 되도록 조정하세요)  ({len(edited)}/20 종목)")
 
+        if is_single_mode:
+            single_asset = len(edited) <= 1
+            selected_periods = st.multiselect(
+                "리밸런싱 주기 비교 (Buy&Hold는 항상 포함됩니다)",
+                options=REBAL_PERIODS, format_func=lambda k: REBAL_LABEL[k],
+                key=f"rebal_multi_{i}", disabled=single_asset,
+            )
+            if single_asset:
+                st.caption("단일 종목은 리밸런싱 여부와 무관하게 결과가 동일하여 선택이 비활성화되었습니다.")
+                selected_periods = []
+            rebalance_list = ['none'] + [p for p in selected_periods if p != 'none']
+        else:
+            rebalance_list = [global_rebalance]
+
         portfolio_configs.append({
-            "name": name, "rebalance": rebal,
+            "name": name, "rebalance_list": rebalance_list,
             "tickers": [t.upper() for t in edited["Ticker"].tolist()],
             "weights": edited["Weight(%)"].tolist(),
         })
@@ -212,26 +234,31 @@ if run:
                 st.warning(f"벤치마크 데이터 조회 실패: {e}")
 
         # --- 2단계: 통일된 시작일(common_start)로 포트폴리오 실행 ---
+        # 리밸런싱 주기가 여러 개 선택된 경우(모드1), 동일한 종목/비중에 대해
+        # 주기별로 각각 실행해서 "이름 - 주기" 형태의 별도 라인으로 결과에 추가한다.
         for cfg in valid_configs:
-            try:
-                result, withdrawn, cashflows, asset_returns, cfg_meta = run_portfolio_backtest(
-                    cfg["tickers"], cfg["weights"], common_start, str(end_date),
-                    initial_investment, withdrawal, cfg["rebalance"]
+            multi_line = len(cfg["rebalance_list"]) > 1
+            for rebal_freq in cfg["rebalance_list"]:
+                line_name = f'{cfg["name"]} - {REBAL_LABEL[rebal_freq]}' if multi_line else cfg["name"]
+                try:
+                    result, withdrawn, cashflows, asset_returns, cfg_meta = run_portfolio_backtest(
+                        cfg["tickers"], cfg["weights"], common_start, str(end_date),
+                        initial_investment, withdrawal, rebal_freq
+                    )
+                except Exception as e:
+                    st.error(f"[{line_name}] 백테스트 실패: {e}")
+                    continue
+
+                metrics, dd = compute_metrics(
+                    result, initial_investment, cashflows, withdrawn,
+                    asset_returns, cfg["weights"], benchmark_returns
                 )
-            except Exception as e:
-                st.error(f"[{cfg['name']}] 백테스트 실패: {e}")
-                continue
+                rolling, rolling_summary = compute_rolling_returns(result)
 
-            metrics, dd = compute_metrics(
-                result, initial_investment, cashflows, withdrawn,
-                asset_returns, cfg["weights"], benchmark_returns
-            )
-            rolling, rolling_summary = compute_rolling_returns(result)
-
-            results[cfg["name"]] = {"result": result, "dd": dd, "rolling": rolling,
-                                     "tickers": cfg["tickers"], "weights": cfg["weights"]}
-            rolling_all[cfg["name"]] = rolling_summary
-            metrics_rows.append({"Portfolio": cfg["name"], **metrics})
+                results[line_name] = {"result": result, "dd": dd, "rolling": rolling,
+                                       "tickers": cfg["tickers"], "weights": cfg["weights"]}
+                rolling_all[line_name] = rolling_summary
+                metrics_rows.append({"Portfolio": line_name, **metrics})
 
         if bench_result is not None:
             bench_metrics, bench_dd = compute_metrics(
