@@ -69,10 +69,23 @@ def render_table(df, fmt=None, wrap_headers=True, max_col_width=78, filename="ta
 st.subheader("Parameters")
 c1, c2, c3, c4 = st.columns(4)
 with c1:
-    start_date = st.date_input(
-        "시작일", value=pd.to_datetime("2015-01-01"),
-        min_value=pd.to_datetime("1900-01-01"), max_value=pd.to_datetime("today"),
-    )
+    st.markdown("시작일")
+    cy, cm, cd = st.columns(3)
+    with cy:
+        start_year = st.number_input("연", min_value=1900, max_value=pd.Timestamp.today().year,
+                                      value=2015, step=1, key="start_year")
+    with cm:
+        start_month = st.number_input("월", min_value=1, max_value=12, value=1, step=1, key="start_month")
+    with cd:
+        start_day = st.number_input("일", min_value=1, max_value=31, value=1, step=1, key="start_day")
+    try:
+        start_date = pd.Timestamp(year=int(start_year), month=int(start_month), day=int(start_day))
+        if start_date > pd.Timestamp.today():
+            st.warning("시작일이 오늘보다 늦어 오늘 날짜로 조정됩니다.")
+            start_date = pd.Timestamp.today()
+    except ValueError:
+        st.error(f"{int(start_year)}년 {int(start_month)}월에는 {int(start_day)}일이 없습니다.")
+        st.stop()
 with c2:
     end_date = st.date_input("종료일", value=pd.to_datetime("today"))
 with c3:
@@ -208,7 +221,7 @@ if run:
         limiting_label, limiting_tickers = None, []
         for ent in entities:
             try:
-                _, _, ent_meta = load_price_data(ent["tickers"], str(start_date), str(end_date))
+                _, _, ent_meta = load_price_data(ent["tickers"], start_date.strftime('%Y-%m-%d'), str(end_date))
             except Exception as e:
                 st.error(f"[{ent['name']}] 데이터 조회 실패: {e}")
                 continue
